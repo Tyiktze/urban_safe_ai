@@ -109,7 +109,7 @@ function App() {
 
   const { isLoaded } = useJsApiLoader({
     id: 'google-map-script',
-    googleMapsApiKey: "AIzaSyDqI0lsyI5LLvAovIXNmzSzEllCmT9MmXI",
+    googleMapsApiKey: "N/A",
     libraries: ['places']
   });
 

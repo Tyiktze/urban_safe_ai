@@ -66,6 +66,12 @@ const categories = [
   { id: 'transport', label: 'Public transport issues', icon: <Bus size={16} /> },
 ];
 
+const initialNotifications = [
+  { id: 1, text: 'New report nearby: Road Damage', time: '2 mins ago', unread: true, icon: <AlertTriangle size={16} /> },
+  { id: 2, text: 'Status update: Your report #1234 is fixed', time: '1 hour ago', unread: true, icon: <LayoutGrid size={16} /> },
+  { id: 3, text: 'Community alert: Heavy rain expected', time: '5 hours ago', unread: false, icon: <Wind size={16} /> }
+];
+
 const containerStyle = {
   width: '100%',
   height: '100%'
@@ -106,6 +112,8 @@ function App() {
     category: 'road',
     image: null
   });
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [notifications, setNotifications] = useState(initialNotifications);
 
   const { isLoaded } = useJsApiLoader({
     id: 'google-map-script',
@@ -185,27 +193,34 @@ function App() {
       <aside className="sidebar glass">
         <div className="sidebar-icon">
           <Menu size={20} />
+          <span className="sidebar-tooltip">Menu</span>
         </div>
 
         <div className="sidebar-icon active">
           <LayoutGrid size={20} />
+          <span className="sidebar-tooltip">Dashboard</span>
         </div>
         <div className="sidebar-icon">
           <Users size={20} />
+          <span className="sidebar-tooltip">Community</span>
         </div>
         <div className="sidebar-icon">
           <Clock size={20} />
+          <span className="sidebar-tooltip">History</span>
         </div>
         <div className="sidebar-icon">
           <PieChart size={20} />
+          <span className="sidebar-tooltip">Analytics</span>
         </div>
         <div className="sidebar-icon">
           <Files size={20} />
+          <span className="sidebar-tooltip">Reports</span>
         </div>
 
         <div className="sidebar-bottom">
           <div className="sidebar-icon">
             <Settings size={20} />
+            <span className="sidebar-tooltip">Settings</span>
           </div>
           <img
             src="https://api.dicebear.com/7.x/avataaars/svg?seed=Felix"
@@ -251,10 +266,34 @@ function App() {
           </div>
 
           <div className="header-actions">
-            <div className="action-btn" style={{ position: 'relative' }}>
+            <div className="action-btn" style={{ position: 'relative' }} onClick={() => setShowNotifications(!showNotifications)}>
               <Bell size={20} />
-              <div className="notification-badge">3</div>
+              <div className="notification-badge">{notifications.filter(n => n.unread).length}</div>
             </div>
+
+            {showNotifications && (
+              <div className="notification-panel">
+                <div className="notification-header">
+                  <h3>Notifications</h3>
+                  <button className="mark-read-btn" onClick={() => setNotifications(notifications.map(n => ({ ...n, unread: false })))}>
+                    Mark all read
+                  </button>
+                </div>
+                <div className="notification-list">
+                  {notifications.map(notification => (
+                    <div key={notification.id} className={`notification-item ${notification.unread ? 'unread' : ''}`}>
+                      <div className="notification-icon">
+                        {notification.icon}
+                      </div>
+                      <div className="notification-content">
+                        <p className="notification-text">{notification.text}</p>
+                        <p className="notification-time">{notification.time}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             <button className="create-btn" onClick={() => alert('Add new report')}>
               <Plus size={18} />
               <span>UrbanSafe</span>
@@ -296,9 +335,7 @@ function App() {
           {/* Main Dashboard / Map View */}
           <section className="main-view glass">
             <div className="map-placeholder">
-              <h2 className="map-header">Google Maps</h2>
-
-              <div className="map-container-wrapper" style={{ flex: 1, borderRadius: '16px', overflow: 'hidden', position: 'relative' }}>
+              <div className="map-container-wrapper" style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
                 {isLoaded ? (
                   <GoogleMap
                     mapContainerStyle={containerStyle}

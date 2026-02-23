@@ -2,13 +2,13 @@
 
 A modern React + Vite web application aimed at enhancing urban safety through AI‑assisted reporting and interactive map tools.
 
-Urban Safe AI provides users with a real‑time, responsive interface to search for locations, add safety reports, view notifications, and interact with geographic data — all wrapped in a sleek light/dark UI powered by React. ([GitHub][1])
+Urban Safe AI provides users with a real‑time, responsive interface to search for locations, add safety reports, view notifications, and interact with geographic data — all wrapped in a sleek light/dark UI powered by React.
 
 ---
 
 ## 🚀 Features
 
-✨ **Responsive UI:** Built using React and Vite for fast performance and smooth development experience. ([GitHub][1])
+✨ **Responsive UI:** Built using React and Vite for fast performance and smooth development experience.
 🗺️ **Search & Place Detection:** Integrated place autocomplete for user‑friendly location searching.
 📍 **Report Submission:** Users can add reports about urban safety issues directly from the interface.
 🔔 **Notifications Panel:** Displays system or user notifications with unread counts and interactive dismissal.
@@ -139,15 +139,3 @@ Distributed under the *MIT License*. See the **LICENSE** file for more details.
 ## ❓ Questions / Feedback
 
 Have ideas or suggestions? Open an issue or start a discussion!
-
----
-
-If you want, I can help you:
-
-✅ Create badges (build, license, version)
-✅ Add screenshots & demo GIFs
-✅ Add usage examples or live deployment instructions
-
-Just tell me! 🫡
-
-[1]: https://github.com/Tyiktze/urban_safe_ai "GitHub - Tyiktze/urban_safe_ai: yes"

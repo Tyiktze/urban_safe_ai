@@ -163,10 +163,10 @@ function App() {
   const [joinedCommunities, setJoinedCommunities] = React.useState(() => {
     try {
       const ids = JSON.parse(localStorage.getItem('urbansafe_joined_ids') || '[]');
-      // We only have IDs here; full objects arrive from CommunityView once mounted
       return [];
     } catch (_) { return []; }
   });
+  const [allCommunities, setAllCommunities] = React.useState([]);
 
   const { isLoaded } = useJsApiLoader({
     id: 'google-map-script',
@@ -751,6 +751,7 @@ function App() {
               }}
               onPostsChange={setCommunityPosts}
               onJoinedCommunitiesChange={setJoinedCommunities}
+              onAllCommunitiesChange={setAllCommunities}
             />
           </div>
           {activeTab === 'settings' && (

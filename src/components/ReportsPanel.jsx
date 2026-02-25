@@ -29,6 +29,7 @@ export default function ReportsPanel({
     onViewOnMap,
 }) {
     const [activeFilter, setActiveFilter] = useState('all'); // 'all' | 'incidents' | 'notices'
+    const [activeCommunityFilter, setActiveCommunityFilter] = useState('all');
     // Live time ticker — re-render every 30s so timeAgo() labels stay accurate
     const [, setTimeTick] = useState(0);
     useEffect(() => {
@@ -42,35 +43,80 @@ export default function ReportsPanel({
         { id: 'notices', label: 'Notices', icon: FileText },
     ];
 
-    // Shared timestamp extractor for both report types
-    const getTime = r => r.timestamp || (r.createdAt ? new Date(r.createdAt).getTime() : 0);
+    // Shared timestamp extractor for both report types (fallback to r.id which is Date.now() for map reports)
+    const getTime = r => r.timestamp || (r.createdAt ? new Date(r.createdAt).getTime() : r.id);
 
     const mergedItems = useMemo(() => {
-        const incidentItems = reportList.map(r => ({ ...r, _itemType: 'incident' }));
+        const incidentItems = reportList.map(r => ({ ...r, _itemType: 'incident', _source: 'map' }));
         const noticeItems = communityPosts
             .filter(p => (Date.now() - (p.timestamp || 0)) < THREE_DAYS)
-            .map(p => ({ ...p, _itemType: p.type === 'incident' ? 'incident' : 'notice' }));
+            .map(p => ({ ...p, _itemType: p.type === 'incident' ? 'incident' : 'notice', _source: 'comm' }));
 
         const allItems = [...incidentItems, ...noticeItems].sort((a, b) => getTime(b) - getTime(a));
 
         // Deduplicate incidents that were shared to multiple communities / public map
-        const seenMapIncidents = new Set();
-        return allItems.filter(item => {
+        const seenMapIncidents = new Map();
+        const finalItems = [];
+
+        for (const item of allItems) {
             if (item._itemType === 'incident') {
-                // For community posts that are incidents, track by their source report ID
                 const trackId = item.linkedReportId || item.id;
-                if (seenMapIncidents.has(trackId)) return false;
-                seenMapIncidents.add(trackId);
+                if (!seenMapIncidents.has(trackId)) {
+                    if (item.communityName) {
+                        item.matchedCommunityTags = [{ name: item.communityName, color: item.communityColor }];
+                    } else {
+                        item.matchedCommunityTags = [];
+                    }
+                    seenMapIncidents.set(trackId, item);
+                    finalItems.push(item);
+                } else {
+                    if (item.communityName) {
+                        const original = seenMapIncidents.get(trackId);
+                        if (!original.matchedCommunityTags) {
+                            original.matchedCommunityTags = [];
+                        }
+                        if (!original.matchedCommunityTags.find(t => t.name === item.communityName)) {
+                            original.matchedCommunityTags.push({ name: item.communityName, color: item.communityColor });
+                        }
+                    }
+                }
+            } else {
+                finalItems.push(item);
             }
-            return true;
-        });
+        }
+        return finalItems;
     }, [reportList, communityPosts]);
 
+    const availableCommunities = useMemo(() => {
+        const comms = new Map();
+        for (const item of mergedItems) {
+            if (item.communityName) {
+                comms.set(item.communityName, { name: item.communityName, color: item.communityColor });
+            }
+            if (item.matchedCommunityTags) {
+                for (const tag of item.matchedCommunityTags) {
+                    comms.set(tag.name, { name: tag.name, color: tag.color });
+                }
+            }
+        }
+        return Array.from(comms.values());
+    }, [mergedItems]);
+
     const filteredItems = useMemo(() => {
-        if (activeFilter === 'incidents') return mergedItems.filter(i => i._itemType === 'incident');
-        if (activeFilter === 'notices') return mergedItems.filter(i => i._itemType === 'notice');
-        return mergedItems;
-    }, [mergedItems, activeFilter]);
+        let items = mergedItems;
+        if (activeFilter === 'incidents') items = items.filter(i => i._itemType === 'incident');
+        if (activeFilter === 'notices') items = items.filter(i => i._itemType === 'notice');
+
+        if (activeCommunityFilter !== 'all') {
+            items = items.filter(i => {
+                if (i.communityName === activeCommunityFilter) return true;
+                if (i.matchedCommunityTags && i.matchedCommunityTags.find(t => t.name === activeCommunityFilter)) return true;
+                return false;
+            });
+        }
+
+        return items;
+    }, [mergedItems, activeFilter, activeCommunityFilter]);
 
     return (
         <section className="reports-panel">
@@ -80,179 +126,242 @@ export default function ReportsPanel({
 
             {/* Filter tabs — only show on dashboard (not history) */}
             {!isHistoryView && (
-                <div style={{ display: 'flex', gap: 6, padding: '0 0 14px', flexWrap: 'wrap' }}>
-                    {FILTER_TABS.map(tab => {
-                        const Icon = tab.icon;
-                        return (
+                <div style={{ padding: '0 0 14px' }}>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: availableCommunities.length > 0 ? 10 : 0 }}>
+                        {FILTER_TABS.map(tab => {
+                            const Icon = tab.icon;
+                            return (
+                                <button
+                                    key={tab.id}
+                                    className={`feed-filter-tab ${activeFilter === tab.id ? 'active' : ''}`}
+                                    style={{ fontSize: 11.5, padding: '6px 12px' }}
+                                    onClick={() => setActiveFilter(tab.id)}
+                                >
+                                    <Icon size={12} /> {tab.label}
+                                </button>
+                            );
+                        })}
+                    </div>
+                    {availableCommunities.length > 0 && (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+                            <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-tertiary)', paddingRight: 4, letterSpacing: '0.5px' }}>COMMUNITY:</span>
                             <button
-                                key={tab.id}
-                                className={`feed-filter-tab ${activeFilter === tab.id ? 'active' : ''}`}
-                                style={{ fontSize: 11.5, padding: '6px 12px' }}
-                                onClick={() => setActiveFilter(tab.id)}
+                                style={{
+                                    padding: '4px 10px', fontSize: 11.5, borderRadius: 12, border: '1px solid var(--glass-border)',
+                                    background: activeCommunityFilter === 'all' ? 'var(--bg-card)' : 'transparent',
+                                    color: activeCommunityFilter === 'all' ? 'var(--text-primary)' : 'var(--text-secondary)',
+                                    cursor: 'pointer', transition: 'all 0.2s', fontWeight: activeCommunityFilter === 'all' ? 600 : 400
+                                }}
+                                onClick={() => setActiveCommunityFilter('all')}
                             >
-                                <Icon size={12} /> {tab.label}
+                                All
                             </button>
-                        );
-                    })}
+                            {availableCommunities.map(c => (
+                                <button
+                                    key={c.name}
+                                    style={{
+                                        padding: '4px 10px', fontSize: 11.5, borderRadius: 12, cursor: 'pointer', transition: 'all 0.2s',
+                                        border: `1px solid ${activeCommunityFilter === c.name ? c.color : 'var(--glass-border)'}`,
+                                        background: activeCommunityFilter === c.name ? c.color + '22' : 'transparent',
+                                        color: activeCommunityFilter === c.name ? c.color : 'var(--text-secondary)',
+                                        display: 'flex', alignItems: 'center', gap: 6, fontWeight: activeCommunityFilter === c.name ? 600 : 400
+                                    }}
+                                    onClick={() => setActiveCommunityFilter(c.name)}
+                                >
+                                    <div style={{ width: 6, height: 6, borderRadius: '50%', background: c.color }} />
+                                    {c.name}
+                                </button>
+                            ))}
+                        </div>
+                    )}
                 </div>
             )}
 
             <div className="reports-list">
                 {/* History view: classic report cards — sorted newest first */}
-                {isHistoryView && [...reportList].sort((a, b) => getTime(b) - getTime(a)).map((report, index) => (
-                    <div
-                        key={report.id}
-                        className={`report-card fade-in ${report.isFake ? 'is-fake' : ''} ${report.isClassifying ? 'is-validating' : ''}`}
-                        style={{ animationDelay: `${index * 0.1}s` }}
-                        onClick={() => !report.isClassifying && onReportClick(report)}
-                    >
-                        {report.image && <img src={report.image} alt={report.title} className="report-img" />}
-                        <div className="report-info">
-                            <div className="report-title-row">
-                                <div className="report-title">
-                                    <div className={`status-dot status-${report.status}`}></div>
-                                    <div className="title-wrapper">
-                                        <span className="title-text">{report.title}</span>
-                                        <div className="location-wrapper">
-                                            <span className="location-general">{report.areaName}</span>
-                                            <span className="location-specific">{report.locationName}</span>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div className={`report-category-badge ${report.isClassifying ? 'analyzing' : ''} severity-${report.severity || 'medium'}`}>
-                                    {report.isClassifying && <Cpu size={10} className="spin" style={{ marginRight: '4px' }} />}
-                                    {report.category || 'General'}
-                                </div>
-                            </div>
-                            <p className="report-desc">{report.description}</p>
-                            <div className="report-actions-footer">
-                                {!report.isSolved && (
-                                    <>
-                                        <button className="action-btn edit" disabled={report.isClassifying} onClick={e => { e.stopPropagation(); onEdit(report); }}>
-                                            <Edit3 size={14} /><span>Edit</span>
-                                        </button>
-                                        <button className="action-btn solve" disabled={report.isClassifying} onClick={e => { e.stopPropagation(); onSolve(report.id); }}>
-                                            <CheckCircle size={14} /><span>Mark Solved</span>
-                                        </button>
-                                    </>
-                                )}
-                                <button className="action-btn delete" disabled={report.isClassifying} onClick={e => { e.stopPropagation(); onDelete(report.id); }}>
-                                    <Trash2 size={14} /><span>Remove</span>
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                ))}
+                {isHistoryView && [...reportList].sort((a, b) => getTime(b) - getTime(a)).map((report, index) => {
+                    const item = report;
+                    const title = item.title || 'Notice';
+                    const description = item.description;
+                    const category = item.category || 'Incident';
+                    const severity = item.severity || 'medium';
+                    const statusClass = `status-${item.status}`;
+                    const generalLoc = item.areaName;
+                    const specificLoc = item.locationName;
 
-                {/* Dashboard view: merged incidents + community notices */}
-                {!isHistoryView && filteredItems.map((item, index) => {
-                    const isIncident = item._itemType === 'incident';
-                    const isClassicReport = !!item.title; // classic map report from reportList
-                    const isCommunityIncident = !isClassicReport && isIncident; // community post promoted to incident
-                    const sevColors = SEVERITY_COLORS[item.severity] || SEVERITY_COLORS.medium;
-
-                    // Classic map report card
-                    if (isClassicReport) {
-                        return (
-                            <div
-                                key={`rpt-${item.id}`}
-                                className={`report-card fade-in ${item.isFake ? 'is-fake' : ''} ${item.isClassifying ? 'is-validating' : ''}`}
-                                style={{ animationDelay: `${index * 0.05}s` }}
-                                onClick={() => !item.isClassifying && onReportClick(item)}
-                            >
-                                {item.image && <img src={item.image} alt={item.title} className="report-img" />}
-                                <div className="report-info">
-                                    <div className="report-title-row">
-                                        <div className="report-title">
-                                            <div className={`status-dot status-${item.status}`}></div>
-                                            <div className="title-wrapper">
-                                                <span className="title-text">{item.title}</span>
-                                                <div className="location-wrapper">
-                                                    <span className="location-general">{item.areaName}</span>
-                                                    <span className="location-specific">{item.locationName}</span>
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <div className={`report-category-badge ${item.isClassifying ? 'analyzing' : ''} severity-${item.severity || 'medium'}`}>
-                                            {item.isClassifying && <Cpu size={10} style={{ marginRight: 4 }} />}
-                                            {item.category || 'General'}
-                                        </div>
-                                    </div>
-                                    <p className="report-desc">{item.description}</p>
-                                </div>
-                            </div>
-                        );
-                    }
-
-                    // Community incident — IDENTICAL rendering to classic map report card
-                    if (isCommunityIncident) {
-                        const locLabel = item.location
-                            ? `${item.location.lat.toFixed(4)}, ${item.location.lng.toFixed(4)}`
-                            : 'Location pinned';
-                        return (
-                            <div
-                                key={`comm-inc-${item.id}`}
-                                className={`report-card fade-in severity-${item.severity || 'high'}`}
-                                style={{ animationDelay: `${index * 0.05}s`, cursor: item.location ? 'pointer' : 'default' }}
-                                onClick={() => item.location && onReportClick && onReportClick({ ...item, title: item.content?.slice(0, 60) })}
-                            >
-                                {item.image && <img src={item.image} alt="Evidence" className="report-img" />}
-                                <div className="report-info">
-                                    <div className="report-title-row">
-                                        <div className="report-title">
-                                            <div className="status-dot status-red"></div>
-                                            <div className="title-wrapper">
-                                                <span className="title-text">
-                                                    {item.content?.slice(0, 60)}{item.content?.length > 60 ? '…' : ''}
-                                                </span>
-                                                <div className="location-wrapper">
-                                                    <span className="location-general">{item.author}</span>
-                                                    {item.location && (
-                                                        <span className="location-specific"><MapPin size={9} style={{ display: 'inline', marginRight: 2 }} />{locLabel}</span>
-                                                    )}
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <div className={`report-category-badge severity-${item.severity || 'high'}`}>
-                                            {item.category || 'Incident'}
-                                        </div>
-                                    </div>
-                                    <p className="report-desc">{item.content}</p>
-                                </div>
-                            </div>
-                        );
-                    }
-
-                    // Community safety notice card
                     return (
                         <div
-                            key={`comm-${item.id}`}
-                            className="report-card community-report-card fade-in community-notice"
-                            style={{ animationDelay: `${index * 0.05}s` }}
+                            key={`hist-${item.id}`}
+                            className={`report-card fade-in ${item.isFake ? 'is-fake' : ''} ${item.isClassifying ? 'is-validating' : ''}`}
+                            style={{ animationDelay: `${index * 0.1}s`, cursor: 'pointer' }}
+                            onClick={() => !item.isClassifying && onReportClick(item)}
                         >
-                            {/* Community source badge */}
-                            <div className="comm-report-source" style={{ color: item.communityColor }}>
-                                <div style={{ width: 7, height: 7, borderRadius: '50%', background: item.communityColor, flexShrink: 0 }} />
-                                {item.communityName}
-                            </div>
+                            {/* Community Tag (if any) */}
+                            {item.communityName && (
+                                <div className="comm-report-source" style={{ color: item.communityColor, padding: '12px 14px 4px 14px', borderBottom: 'none', background: 'transparent' }}>
+                                    <div style={{ width: 7, height: 7, borderRadius: '50%', background: item.communityColor, flexShrink: 0 }} />
+                                    {item.communityName}
+                                </div>
+                            )}
 
-                            <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-                                <div style={{ flex: 1, minWidth: 0 }}>
-                                    <p className="report-desc" style={{ marginBottom: 8 }}>{item.content}</p>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                                        <span style={{ background: sevColors.bg, color: sevColors.text, border: `1px solid ${sevColors.border}`, borderRadius: 999, padding: '2px 8px', fontSize: 10, fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 3, textTransform: 'uppercase' }}>
-                                            <Flame size={9} /> {item.severity}
-                                        </span>
-                                        <span style={{ fontSize: 11, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 3 }}>
-                                            <Clock size={10} /> {timeAgo(item.timestamp)}
-                                        </span>
-                                        <span style={{ fontSize: 11, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 3 }}>
-                                            <Users size={10} /> {item.author}
-                                        </span>
+                            {/* Info Top: Title row */}
+                            <div className="report-info" style={{ paddingBottom: item.image ? 12 : undefined }}>
+                                <div className="report-title-row">
+                                    <div className="report-title">
+                                        <div className={`status-dot ${statusClass}`}></div>
+                                        <div className="title-wrapper">
+                                            <span className="title-text">{title}</span>
+                                            <div className="location-wrapper">
+                                                <span className="location-general">{generalLoc}</span>
+                                                {specificLoc && <span className="location-specific">{specificLoc}</span>}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className={`report-category-badge ${item.isClassifying ? 'analyzing' : ''} severity-${severity}`}>
+                                        {item.isClassifying && <Cpu size={10} className="spin" style={{ marginRight: '4px' }} />}
+                                        {category}
                                     </div>
                                 </div>
-                                {item.image && (
-                                    <img src={item.image} alt="Evidence" style={{ width: 54, height: 54, objectFit: 'cover', borderRadius: 8, flexShrink: 0 }} />
+                            </div>
+
+                            {/* Image */}
+                            {item.image && <img src={item.image} alt={title} className="report-img" style={{ borderRadius: 0 }} />}
+
+                            {/* Info Bottom: Description & Actions */}
+                            <div className="report-info" style={{ paddingTop: item.image ? 12 : (item.communityName ? 0 : 4) }}>
+                                {description && <p className="report-desc">{description}</p>}
+
+                                <div className="report-actions-footer">
+                                    {!item.isSolved && (
+                                        <>
+                                            <button className="action-btn edit" disabled={item.isClassifying} onClick={e => { e.stopPropagation(); onEdit(item); }}>
+                                                <Edit3 size={14} /><span>Edit</span>
+                                            </button>
+                                            <button className="action-btn solve" disabled={item.isClassifying} onClick={e => { e.stopPropagation(); onSolve(item.id); }}>
+                                                <CheckCircle size={14} /><span>Mark Solved</span>
+                                            </button>
+                                        </>
+                                    )}
+                                    <button className="action-btn delete" disabled={item.isClassifying} onClick={e => { e.stopPropagation(); onDelete(item.id); }}>
+                                        <Trash2 size={14} /><span>Remove</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    );
+                })}
+
+                {/* Dashboard view: Unified report format */}
+                {!isHistoryView && filteredItems.map((item, index) => {
+                    const isIncident = item._itemType === 'incident';
+                    const isClassicReport = !!item.title && !item.communityId; // classic map report
+
+                    // Parse title & description differently to avoid duplicates
+                    let title = 'Notice';
+                    let description = '';
+
+                    if (isClassicReport) {
+                        title = item.title;
+                        description = item.description;
+                    } else if (item.title && item.description) {
+                        // Support for well-formed community posts
+                        title = item.title;
+                        description = item.description;
+                    } else if (item.content) {
+                        // Fallback parsing for legacy community posts
+                        if (item.content.includes(' — ')) {
+                            const parts = item.content.split(' — ');
+                            title = parts[0];
+                            description = parts.slice(1).join(' — ');
+                        } else {
+                            // Don't repeat identical short text; default title to "Notice" if content doesn't naturally split
+                            title = item.content.length > 50 ? item.content.slice(0, 47) + '...' : 'Notice';
+                            description = item.content;
+                        }
+                    }
+
+                    const category = item.category || (isIncident ? 'Incident' : 'Notice');
+                    const severity = item.severity || 'medium';
+                    const statusClass = isClassicReport ? `status-${item.status}` : (isIncident ? 'status-red' : 'status-orange');
+
+                    const generalLoc = isClassicReport ? item.areaName : item.author;
+                    let specificLoc = isClassicReport ? item.locationName : '';
+                    if (!isClassicReport && item.location) {
+                        specificLoc = `${item.location.lat.toFixed(4)}, ${item.location.lng.toFixed(4)}`;
+                    }
+
+                    return (
+                        <div
+                            key={`${item._itemType}-${item.id}`}
+                            className={`report-card fade-in ${item.isFake ? 'is-fake' : ''} ${item.isClassifying ? 'is-validating' : ''}`}
+                            style={{ animationDelay: `${index * 0.05}s`, cursor: item.location || isClassicReport ? 'pointer' : 'default' }}
+                            onClick={() => {
+                                if (item.isClassifying) return;
+                                if (isClassicReport) onReportClick(item);
+                                else if (item.location && onReportClick) onReportClick({ ...item, title });
+                            }}
+                        >
+                            {/* Community Tags */}
+                            {item.matchedCommunityTags && item.matchedCommunityTags.length > 0 ? (
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, padding: '12px 14px 4px 14px' }}>
+                                    {item.matchedCommunityTags.map(tag => (
+                                        <div key={tag.name} className="comm-report-source" style={{ color: tag.color, padding: 0, borderBottom: 'none', background: 'transparent' }}>
+                                            <div style={{ width: 7, height: 7, borderRadius: '50%', background: tag.color, flexShrink: 0 }} />
+                                            {tag.name}
+                                        </div>
+                                    ))}
+                                </div>
+                            ) : item.communityName && (
+                                <div className="comm-report-source" style={{ color: item.communityColor, padding: '12px 14px 4px 14px', borderBottom: 'none', background: 'transparent' }}>
+                                    <div style={{ width: 7, height: 7, borderRadius: '50%', background: item.communityColor, flexShrink: 0 }} />
+                                    {item.communityName}
+                                </div>
+                            )}
+
+                            {/* Info Top: Title row */}
+                            <div className="report-info" style={{ paddingBottom: item.image ? 12 : undefined }}>
+                                <div className="report-title-row">
+                                    <div className="report-title">
+                                        <div className={`status-dot ${statusClass}`}></div>
+                                        <div className="title-wrapper">
+                                            <span className="title-text">{title}</span>
+                                            <div className="location-wrapper">
+                                                <span className="location-general">{generalLoc}</span>
+                                                {specificLoc && (
+                                                    <span className="location-specific">
+                                                        {!isClassicReport && <MapPin size={9} style={{ display: 'inline', marginRight: 2 }} />}
+                                                        {specificLoc}
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className={`report-category-badge ${item.isClassifying ? 'analyzing' : ''} severity-${severity}`}>
+                                        {item.isClassifying && <Cpu size={10} style={{ marginRight: 4 }} />}
+                                        {category}
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Image */}
+                            {item.image && <img src={item.image} alt={title} className="report-img" style={{ borderRadius: 0 }} />}
+
+                            {/* Info Bottom: Description */}
+                            <div className="report-info" style={{ paddingTop: item.image ? 12 : (item.communityName ? 0 : 4) }}>
+                                {description && <p className="report-desc">{description}</p>}
+
+                                {/* Extra metadata for community posts */}
+                                {!isClassicReport && (
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 10, fontSize: 11, color: 'var(--text-secondary)' }}>
+                                        <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                            <Clock size={11} /> {timeAgo(item.timestamp)}
+                                        </span>
+                                        {!item.location && (
+                                            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                                <Globe size={11} /> General Notice
+                                            </span>
+                                        )}
+                                    </div>
                                 )}
                             </div>
                         </div>

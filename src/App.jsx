@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
-import { useJsApiLoader } from '@react-google-maps/api';
-import { AlertTriangle, Droplets, Palette, Trash2, Building2, Wind, Bus, Lightbulb, Zap, Users } from 'lucide-react';
+import { useJsApiLoader, GoogleMap, MarkerF } from '@react-google-maps/api';
+import { AlertTriangle, Droplets, Palette, Trash2, Building2, Wind, Bus, Lightbulb, Zap, Users, MapPin } from 'lucide-react';
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 import ReportModal from './components/ReportModal';
+import AuthModal from './components/AuthModal';
 import DashboardView from './components/DashboardView';
 import HistoryView from './components/HistoryView';
-import GroupsView from './components/GroupsView';
+import CommunityView, { INITIAL_POSTS } from './components/CommunityView';
 import SettingsView from './components/SettingsView';
 
 const reports = [];
@@ -38,8 +39,8 @@ function App() {
   const [selectedAddress, setSelectedAddress] = useState('');
   const [selectedArea, setSelectedArea] = useState('');
   const [selectedReportId, setSelectedReportId] = useState(null);
-  const [userLocation, setUserLocation] = useState({ lat: 40.7128, lng: -74.0060 }); // Default NYC
-  const [mapCenter, setMapCenter] = useState({ lat: 40.7128, lng: -74.0060 });
+  const [userLocation, setUserLocation] = useState({ lat: 6.1248, lng: 100.3673 }); // Default: Alor Setar, Kedah
+  const [mapCenter, setMapCenter] = useState({ lat: 6.1248, lng: 100.3673 });
   const [notifications, setNotifications] = useState([
     { id: 1, text: "Systems online and active.", time: "Just now", unread: true },
     { id: 2, text: "UrbanSafe AI ready for classification.", time: "5m ago", unread: false }
@@ -51,10 +52,26 @@ function App() {
   const [cooldownRemaining, setCooldownRemaining] = useState(0);
   const [lastEditTime, setLastEditTime] = useState(0);
   const [editCooldownRemaining, setEditCooldownRemaining] = useState(0);
+  const [communityPostModal, setCommunityPostModal] = useState({ open: false, audience: 'community' });
+  // Seed communityPosts from INITIAL_POSTS filtered to default-joined communities (ids 1 & 4)
+  // so Recent Reports is populated immediately on page load, even before visiting the community tab.
+  const [communityPosts, setCommunityPosts] = React.useState(() => {
+    try {
+      const savedJoined = JSON.parse(localStorage.getItem('urbansafe_joined_ids') || '[1,4]');
+      return INITIAL_POSTS.filter(p => savedJoined.includes(p.communityId));
+    } catch (_) {
+      return INITIAL_POSTS.filter(p => [1, 4].includes(p.communityId));
+    }
+  });
+
+  const [showChooseOnMapPin, setShowChooseOnMapPin] = useState(false);
+  const [chosenPinLocation, setChosenPinLocation] = useState(null);
+  const [user, setUser] = useState(null); // { username, email, avatar, loginMethod }
+  const [showAuth, setShowAuth] = useState(false);
   const [appSettings, setAppSettings] = useState({
     notifications: true,
     darkMode: true,
-    mapEngine: 'premium' // 'premium', 'styleB', 'satellite'
+    mapEngine: 'google' // 'google' (auto dark/light) | 'satellite'
   });
 
   // Apply dark mode theme
@@ -68,7 +85,7 @@ function App() {
 
   // Memoized filtered lists to prevent infinite re-renders
   const publicReports = React.useMemo(() =>
-    reportList.filter(r => !r.isClassifying && !r.isFake),
+    reportList.filter(r => !r.isClassifying && !r.isFake && r.isPublic !== false),
     [reportList]
   );
 
@@ -100,26 +117,55 @@ function App() {
   }, [editCooldownRemaining]);
 
   React.useEffect(() => {
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          const pos = {
-            lat: position.coords.latitude,
-            lng: position.coords.longitude,
-          };
-          setUserLocation(pos);
-          setMapCenter(pos);
-        },
-        () => {
-          console.warn("Geolocation permission denied or failed. Using default.");
-        }
-      );
+    if (!navigator.geolocation) {
+      console.warn("Geolocation not supported by this browser. Using default location.");
+      return;
     }
+
+    let isFirstFix = true;
+
+    const watchId = navigator.geolocation.watchPosition(
+      (position) => {
+        const pos = {
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+        };
+        setUserLocation(pos);
+        // Only snap the map center on the very first GPS fix
+        // After that, let the user freely pan without the map jumping back
+        if (isFirstFix) {
+          setMapCenter(pos);
+          isFirstFix = false;
+        }
+      },
+      (err) => {
+        console.warn("Geolocation watch error:", err.message, "— using default location.");
+      },
+      {
+        enableHighAccuracy: true,  // Use GPS chip when available
+        maximumAge: 5000,          // Accept cached position up to 5s old
+        timeout: 10000,            // Give up after 10s if no fix
+      }
+    );
+
+    // Cleanup: stop watching when the component unmounts
+    return () => navigator.geolocation.clearWatch(watchId);
   }, []);
   const [formData, setFormData] = useState({
     description: '',
     category: '',
-    image: null
+    image: null,
+    audienceIds: [],   // community IDs to share to
+    isPublic: true,    // also share publicly on the map feed
+  });
+
+  // Joined communities synced from CommunityView so we can show the audience picker in ReportModal
+  const [joinedCommunities, setJoinedCommunities] = React.useState(() => {
+    try {
+      const ids = JSON.parse(localStorage.getItem('urbansafe_joined_ids') || '[]');
+      // We only have IDs here; full objects arrive from CommunityView once mounted
+      return [];
+    } catch (_) { return []; }
   });
 
   const { isLoaded } = useJsApiLoader({
@@ -405,7 +451,7 @@ function App() {
       id: reportId,
       title: formData.category || 'New Incident',
       description: formData.description,
-      image: formData.image, // No placeholder
+      image: formData.image,
       status: 'orange',
       icon: <AlertTriangle size={14} />,
       location: selectedLocation,
@@ -413,8 +459,38 @@ function App() {
       areaName: selectedArea || 'Unknown Area',
       category: 'Analyzing...',
       isClassifying: true,
-      isUserMade: true
+      isUserMade: true,
+      // Audience — keep for reference; public reports show on map automatically
+      audienceIds: formData.audienceIds || [],
+      isPublic: formData.isPublic !== false,
     };
+
+    // If shared to communities, push a community post immediately (will be updated later with classified category)
+    const audienceIds = formData.audienceIds || [];
+    if (audienceIds.length > 0) {
+      const now = Date.now();
+      const newCommunityPosts = audienceIds.map(cid => {
+        const comm = joinedCommunities.find(c => c.id === cid);
+        return {
+          id: now + cid,
+          type: 'incident',
+          author: 'You',
+          avatar: 'Yo',
+          timestamp: now,
+          content: [formData.category, formData.description].filter(Boolean).join(' — '),
+          communityId: cid,
+          linkedReportId: reportId,
+          communityName: comm?.name || 'My Community',
+          communityColor: comm?.color || '#ff6b35',
+          category: 'safety',
+          severity: 'medium',
+          image: formData.image || null,
+          likes: 0, comments: 0,
+          location: selectedLocation || null,
+        };
+      });
+      setCommunityPosts(prev => [...newCommunityPosts, ...prev]);
+    }
 
     // Add immediately
     setReportList(prev => [newReport, ...prev]);
@@ -423,7 +499,7 @@ function App() {
 
     // Close modal immediately
     setIsModalOpen(false);
-    setFormData({ description: '', category: '', image: null });
+    setFormData({ description: '', category: '', image: null, audienceIds: [], isPublic: true });
     setImagePreview(null);
     setSelectedLocation(null);
     setSelectedAddress('');
@@ -561,18 +637,20 @@ function App() {
       }
     })();
   };
-  const handleAddReport = () => {
-    setSelectedLocation(userLocation);
+  const handleAddReport = (prefillDescription = '', prefillLocation = null) => {
+    const loc = prefillLocation || userLocation;
+    setSelectedLocation(loc);
+    if (prefillDescription) {
+      setFormData(prev => ({ ...prev, description: prefillDescription, category: '' }));
+    }
     setIsModalOpen(true);
-
-    // Reverse geocode user location
     const geocoder = new google.maps.Geocoder();
-    geocoder.geocode({ location: userLocation }, (results, status) => {
+    geocoder.geocode({ location: loc }, (results, status) => {
       if (status === "OK" && results[0]) {
         setSelectedAddress(results[0].formatted_address);
         setSelectedArea(getAreaFromResults(results));
       } else {
-        setSelectedAddress(`${userLocation.lat.toFixed(4)}, ${userLocation.lng.toFixed(4)}`);
+        setSelectedAddress(`${loc.lat.toFixed(4)}, ${loc.lng.toFixed(4)}`);
         setSelectedArea('Unknown Area');
       }
     });
@@ -585,6 +663,9 @@ function App() {
         isOpen={isSidebarOpen}
         activeTab={activeTab}
         onTabChange={setActiveTab}
+        user={user}
+        onOpenAuth={() => setShowAuth(true)}
+        onLogout={() => setUser(null)}
       />
 
       <main className="main-layout">
@@ -593,7 +674,11 @@ function App() {
           onPlaceChanged={onPlaceSelect}
           searchQuery={searchQuery}
           setSearchQuery={setSearchQuery}
-          onAddReport={handleAddReport}
+          onAddReport={() => handleAddReport()}
+          onShareToCommunity={() => {
+            setActiveTab('users');
+            setCommunityPostModal({ open: true, audience: 'community' });
+          }}
           notifications={notifications}
           setNotifications={setNotifications}
           onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
@@ -605,6 +690,7 @@ function App() {
           {activeTab === 'grid' && (
             <DashboardView
               publicReports={publicReports}
+              communityPosts={communityPosts}
               handleReportClick={handleReportClick}
               isLoaded={isLoaded}
               onLoad={onLoad}
@@ -618,6 +704,10 @@ function App() {
               map={map}
               mapEngine={appSettings.mapEngine}
               darkMode={appSettings.darkMode}
+              onViewOnMap={(loc) => {
+                setMapCenter(loc);
+                if (map) { map.panTo(loc); map.setZoom(16); }
+              }}
             />
           )}
 
@@ -644,11 +734,31 @@ function App() {
             />
           )}
 
-          {activeTab === 'users' && <GroupsView />}
+          {/* CommunityView is ALWAYS mounted to preserve join state and feed posts across tab switches.
+              Only visibility is toggled via CSS — no unmount/remount. */}
+          <div style={{ display: activeTab === 'users' ? 'contents' : 'none' }}>
+            <CommunityView
+              reportList={publicReports}
+              genAI={genAI}
+              isLoaded={isLoaded}
+              userLocation={userLocation}
+              externalPostModalOpen={communityPostModal.open}
+              initialAudience={communityPostModal.audience}
+              onCloseExternalPostModal={() => setCommunityPostModal({ open: false, audience: 'community' })}
+              onConvertToReport={(description, pinnedLoc) => {
+                setActiveTab('grid');
+                setTimeout(() => handleAddReport(description, pinnedLoc), 80);
+              }}
+              onPostsChange={setCommunityPosts}
+              onJoinedCommunitiesChange={setJoinedCommunities}
+            />
+          </div>
           {activeTab === 'settings' && (
             <SettingsView
               appSettings={appSettings}
               setAppSettings={setAppSettings}
+              user={user}
+              setUser={setUser}
             />
           )}
         </div>
@@ -662,7 +772,7 @@ function App() {
         onClose={() => {
           setIsModalOpen(false);
           setEditingReportId(null);
-          setFormData({ description: '', category: '', image: null });
+          setFormData({ description: '', category: '', image: null, audienceIds: [], isPublic: true });
           setImagePreview(null);
         }}
         selectedAddress={selectedAddress}
@@ -673,7 +783,91 @@ function App() {
         handleImageChange={handleImageChange}
         handleSubmit={handleSubmit}
         categories={categories}
+        joinedCommunities={joinedCommunities}
       />
+
+      {showAuth && (
+        <AuthModal
+          onClose={() => setShowAuth(false)}
+          onLogin={(userData) => setUser(userData)}
+        />
+      )}
+
+
+      {/* Choose-on-Map Pin Modal */}
+      {showChooseOnMapPin && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(6px)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ background: 'var(--bg-card)', border: '1px solid var(--glass-border)', borderRadius: 20, maxWidth: 560, width: '95vw', boxShadow: '0 24px 60px rgba(0,0,0,0.6)', overflow: 'hidden' }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '18px 22px', borderBottom: '1px solid var(--glass-border)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontWeight: 700, fontSize: 16, color: 'var(--text-primary)' }}>
+                <MapPin size={18} style={{ color: '#ff6b35' }} /> Pin the Incident Location
+              </div>
+              <button onClick={() => { setShowChooseOnMapPin(false); setChosenPinLocation(null); }} style={{ all: 'unset', cursor: 'pointer', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center' }}>
+                ✕
+              </button>
+            </div>
+            <div style={{ padding: '14px 20px' }}>
+              <div style={{ background: 'rgba(255,107,53,0.08)', border: '1px solid rgba(255,107,53,0.2)', borderRadius: 8, padding: '8px 12px', fontSize: 12.5, color: '#ffb380', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <MapPin size={13} /> Click anywhere on the map to pin the exact incident location.
+              </div>
+              <div style={{ height: 300, borderRadius: 12, overflow: 'hidden', border: '1px solid var(--glass-border)' }}>
+                {isLoaded ? (
+                  <GoogleMap
+                    mapContainerStyle={{ width: '100%', height: '100%' }}
+                    center={chosenPinLocation || userLocation || { lat: 40.7128, lng: -74.006 }}
+                    zoom={15}
+                    options={{
+                      disableDefaultUI: true, styles: [
+                        { elementType: 'geometry', stylers: [{ color: '#121319' }] },
+                        { elementType: 'labels.text.fill', stylers: [{ color: '#747474' }] },
+                        { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#1e2126' }] },
+                        { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0f1115' }] },
+                      ]
+                    }}
+                    onClick={e => setChosenPinLocation({ lat: e.latLng.lat(), lng: e.latLng.lng() })}
+                  >
+                    {chosenPinLocation && (
+                      <MarkerF position={chosenPinLocation} icon={{ url: 'http://maps.google.com/mapfiles/ms/icons/red-dot.png' }} />
+                    )}
+                    {userLocation && (
+                      <MarkerF position={userLocation} />
+                    )}
+                  </GoogleMap>
+                ) : (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-secondary)' }}>Loading map...</div>
+                )}
+              </div>
+              {chosenPinLocation && (
+                <div style={{ marginTop: 10, fontSize: 12, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <MapPin size={12} style={{ color: '#ff8080' }} />
+                  Pinned: {chosenPinLocation.lat.toFixed(5)}, {chosenPinLocation.lng.toFixed(5)}
+                </div>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: 10, padding: '14px 20px', borderTop: '1px solid var(--glass-border)' }}>
+              <button
+                className="btn-ghost"
+                style={{ flex: 1 }}
+                onClick={() => { setShowChooseOnMapPin(false); setChosenPinLocation(null); setShowLocationChoice(true); }}
+              >
+                Back
+              </button>
+              <button
+                className="btn-orange"
+                style={{ flex: 1, gap: 8 }}
+                disabled={!chosenPinLocation}
+                onClick={() => {
+                  setShowChooseOnMapPin(false);
+                  handleAddReport('', chosenPinLocation);
+                  setChosenPinLocation(null);
+                }}
+              >
+                <MapPin size={15} /> Confirm Location
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

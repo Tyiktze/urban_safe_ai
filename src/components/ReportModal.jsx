@@ -1,4 +1,4 @@
-import { MapPin, Cpu, Upload, Plus, Edit3 } from 'lucide-react';
+import { MapPin, Cpu, Upload, Plus, Edit3, Globe, Users, CheckCircle } from 'lucide-react';
 
 export default function ReportModal({
     isOpen,
@@ -14,12 +14,19 @@ export default function ReportModal({
     selectedAddress,
     isEditing = false,
     cooldownRemaining = 0,
-    editCooldownRemaining = 0
+    editCooldownRemaining = 0,
+    joinedCommunities = [],
 }) {
     if (!isOpen) return null;
 
     const isCooldownActive = isEditing ? editCooldownRemaining > 0 : cooldownRemaining > 0;
     const currentCooldown = isEditing ? editCooldownRemaining : cooldownRemaining;
+
+    const toggleCommunity = (id) => {
+        const current = formData.audienceIds || [];
+        const next = current.includes(id) ? current.filter(c => c !== id) : [...current, id];
+        setFormData({ ...formData, audienceIds: next });
+    };
 
     return (
         <div className="modal-overlay">
@@ -33,7 +40,6 @@ export default function ReportModal({
                 </div>
 
                 <form onSubmit={handleSubmit}>
-                    {/* ... form content ... */}
                     <div className="form-group">
                         <label>
                             Incident Title / Type
@@ -55,14 +61,13 @@ export default function ReportModal({
                     </div>
 
                     <div className="form-group">
-                        <label>Description</label>
+                        <label>Description <span style={{ fontSize: 11, color: 'var(--text-secondary)', fontWeight: 400 }}>(optional)</span></label>
                         <textarea
                             rows="3"
                             placeholder="Tell us what you see..."
                             value={formData.description}
                             onChange={(e) => setFormData({ ...formData, description: e.target.value.slice(0, 300) })}
                             maxLength={300}
-                            required
                         ></textarea>
                         <div className="char-counter">
                             {formData.description?.length || 0}/300
@@ -109,6 +114,58 @@ export default function ReportModal({
                             >
                                 Change Image
                             </button>
+                        )}
+                    </div>
+
+                    {/* ── Share To ─────────────────────────────────────── */}
+                    <div className="form-group">
+                        <label style={{ marginBottom: 8, display: 'block' }}>Share To</label>
+
+                        {/* Public toggle */}
+                        <div
+                            className={`audience-opt${formData.isPublic !== false ? ' active' : ''}`}
+                            style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 14px', borderRadius: 10, marginBottom: 8, cursor: 'pointer', border: '1px solid', borderColor: formData.isPublic !== false ? 'var(--accent-orange)' : 'var(--glass-border)', background: formData.isPublic !== false ? 'rgba(255,107,53,0.1)' : 'rgba(255,255,255,0.03)', transition: 'all 0.2s' }}
+                            onClick={() => setFormData({ ...formData, isPublic: !formData.isPublic })}
+                        >
+                            <Globe size={14} style={{ color: formData.isPublic !== false ? 'var(--accent-orange)' : 'var(--text-secondary)', flexShrink: 0 }} />
+                            <div style={{ flex: 1 }}>
+                                <div style={{ fontSize: 13, fontWeight: 600, color: formData.isPublic !== false ? 'var(--accent-orange)' : 'var(--text-primary)' }}>Public Map</div>
+                                <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Visible to all UrbanSafe users on the map</div>
+                            </div>
+                            {formData.isPublic !== false && <CheckCircle size={14} style={{ color: 'var(--accent-orange)', flexShrink: 0 }} />}
+                        </div>
+
+                        {/* Community chips */}
+                        {joinedCommunities.length > 0 && (
+                            <>
+                                <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 5 }}>
+                                    <Users size={11} /> Also share to communities (optional)
+                                </div>
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                                    {joinedCommunities.map(c => {
+                                        const active = (formData.audienceIds || []).includes(c.id);
+                                        return (
+                                            <button
+                                                key={c.id}
+                                                type="button"
+                                                onClick={() => toggleCommunity(c.id)}
+                                                style={{
+                                                    display: 'flex', alignItems: 'center', gap: 6,
+                                                    padding: '5px 12px', borderRadius: 999, fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                                                    border: `1px solid ${active ? c.color : 'var(--glass-border)'}`,
+                                                    background: active ? c.color + '22' : 'rgba(255,255,255,0.03)',
+                                                    color: active ? c.color : 'var(--text-secondary)',
+                                                    transition: 'all 0.18s',
+                                                }}
+                                            >
+                                                <div style={{ width: 8, height: 8, borderRadius: '50%', background: c.color, flexShrink: 0 }} />
+                                                {c.name}
+                                                {active && <CheckCircle size={11} />}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </>
                         )}
                     </div>
 

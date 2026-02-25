@@ -321,6 +321,7 @@ export default function CommunityView({
     onConvertToReport,
     onPostsChange,
     onJoinedCommunitiesChange,
+    onAllCommunitiesChange,
     onChooseOnMap,
 }) {
     // Restore join state from localStorage, then build community positions
@@ -417,6 +418,12 @@ export default function CommunityView({
     React.useEffect(() => {
         if (onJoinedCommunitiesChangeRef.current) onJoinedCommunitiesChangeRef.current(joinedCommunities);
     }, [joinedCommunities]);
+
+    const onAllCommunitiesChangeRef = React.useRef(onAllCommunitiesChange);
+    React.useEffect(() => { onAllCommunitiesChangeRef.current = onAllCommunitiesChange; }, [onAllCommunitiesChange]);
+    React.useEffect(() => {
+        if (onAllCommunitiesChangeRef.current) onAllCommunitiesChangeRef.current(communities);
+    }, [communities]);
 
     // ── 2km radar: unjoined communities within NEARBY_RADIUS_KM of user ─────
     const nearbyCommunities = useMemo(() => {

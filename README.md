@@ -101,15 +101,147 @@ urban_safe_ai/
 
 ---
 
-## ⚙️ Config & Environment
+# 🔐 Environment Variables Setup
 
-Create a `.env` file in the root if needed to store:
+This project requires several API keys and configuration values to function properly.
+
+Create a `.env` file in the root of your project and add the following variables (Or replace the existing one with keys):
+
+```env
+VITE_FIREBASE_API_KEY=
+VITE_FIREBASE_AUTH_DOMAIN=
+VITE_FIREBASE_PROJECT_ID=
+VITE_FIREBASE_STORAGE_BUCKET=
+VITE_FIREBASE_MESSAGING_SENDER_ID=
+VITE_FIREBASE_APP_ID=
+VITE_FIREBASE_MEASUREMENT_ID=
+
+VITE_GOOGLE_MAPS_API_KEY=
+VITE_GEMINI_API_KEY=
+VITE_OPENWEATHER_API_KEY=
+
+VITE_FUNCTIONS_BASE_URL=
+```
+
+---
+
+## 🔥 Firebase Configuration
+
+Obtain from: **Firebase**
+
+### Steps:
+
+1. Go to [https://console.firebase.google.com](https://console.firebase.google.com)
+2. Create a new project.
+3. Click **Project Settings** (⚙️ icon).
+4. Under **Your Apps**, register a Web App.
+5. Firebase will generate a config object containing:
+
+   * `apiKey`
+   * `authDomain`
+   * `projectId`
+   * `storageBucket`
+   * `messagingSenderId`
+   * `appId`
+   * `measurementId`
+
+Copy those values into your `.env`.
+
+---
+
+## 🗺️ Google Maps API Key
+
+Obtain from: **Google Cloud Platform**
+
+### Steps:
+
+1. Go to [https://console.cloud.google.com](https://console.cloud.google.com)
+2. Create or select a project.
+3. Enable:
+
+   * Maps JavaScript API
+   * Places API (if using autocomplete)
+4. Go to **APIs & Services → Credentials**
+5. Create an API Key.
+6. Restrict the key to:
+
+   * HTTP referrers (recommended)
+   * Only required APIs
+
+Paste into:
 
 ```
-VITE_MAPS_API_KEY=your_google_maps_api_key
+VITE_GOOGLE_MAPS_API_KEY=
 ```
 
-For integration with Google Places autocomplete or maps, your API key should have the appropriate Places API enabled.
+---
+
+## 🤖 Gemini AI API Key
+
+Obtain from: **Google AI Studio**
+
+### Steps:
+
+1. Visit [https://aistudio.google.com](https://aistudio.google.com)
+2. Sign in with Google.
+3. Go to **API Keys**
+4. Create a new API key.
+
+Paste into:
+
+```
+VITE_GEMINI_API_KEY=
+```
+
+---
+
+## 🌦️ OpenWeatherMap API Key
+
+Obtain from: **OpenWeather**
+
+### Steps:
+
+1. Go to [https://openweathermap.org/api](https://openweathermap.org/api)
+2. Create a free account.
+3. Navigate to **My API Keys**
+4. Generate a key.
+
+Paste into:
+
+```
+VITE_OPENWEATHER_API_KEY=
+```
+
+---
+
+## ☁️ Firebase Cloud Functions Base URL
+
+After deploying functions using:
+
+```bash
+firebase deploy --only functions
+```
+
+You will get a URL like:
+
+```
+https://us-central1-your_project_id.cloudfunctions.net
+```
+
+Set:
+
+```
+VITE_FUNCTIONS_BASE_URL=https://us-central1-your_project_id.cloudfunctions.net
+```
+
+---
+
+# ⚠️ Security Notes
+
+* Never commit `.env` files.
+* Add `.env` to `.gitignore`.
+* Restrict API keys in Google Cloud.
+* Consider using different keys for development and production.
 
 ---
 

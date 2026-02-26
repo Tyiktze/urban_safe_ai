@@ -601,6 +601,33 @@ function App() {
           darkMode={appSettings.darkMode}
         />
 
+        {/* Temporary Seed Button */}
+        <div style={{ padding: '10px 20px', display: 'flex', gap: '10px' }}>
+          <button
+            onClick={async () => {
+              const { seedInitialData } = await import('./firebase/seedData');
+              const result = await seedInitialData();
+              if (result.success) {
+                alert("Data stored successfully in Firebase!");
+              } else {
+                alert("Error: " + result.error + "\n\nMake sure your .env file has correct Firebase credentials.");
+              }
+            }}
+            style={{
+              padding: '8px 16px',
+              backgroundColor: '#3b82f6',
+              color: 'white',
+              border: 'none',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              fontSize: '14px',
+              fontWeight: '500'
+            }}
+          >
+            🚀 Seed Firebase Data
+          </button>
+        </div>
+
         <div className="content-body">
           {activeTab === 'grid' && (
             <DashboardView

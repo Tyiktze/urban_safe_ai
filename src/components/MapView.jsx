@@ -301,10 +301,10 @@ export default function MapView({
         if (mapEngine === 'satellite') {
             return { ...base, mapTypeId: 'hybrid' };
         }
-        if (mapEngine === 'styleB' || !darkMode) {
-            return { ...base, styles: [] }; // Standard clean style (Light)
-        }
-        return { ...base, styles: mapStyle }; // Premium Dark
+        // Google Maps: dark style in dark mode, clean light style in light mode
+        return darkMode
+            ? { ...base, styles: mapStyle }       // dark
+            : { ...base, styles: [] };             // light
     }, [mapEngine, darkMode]);
 
     // Dwell tracker for player pin
@@ -445,7 +445,7 @@ export default function MapView({
                                     options={{ pixelOffset: new window.google.maps.Size(0, -10) }}
                                 >
                                     <div style={{
-                                        color: 'var(--text-primary)', minWidth: 220, maxWidth: 280,
+                                        color: '#1a1a1a', minWidth: 220, maxWidth: 280,
                                         maxHeight: 300, overflowY: 'auto', paddingRight: 8,
                                         fontFamily: 'inherit'
                                     }}>
@@ -455,8 +455,24 @@ export default function MapView({
                                                 paddingBottom: idx === hoveredData.reports.length - 1 ? 0 : 12,
                                                 borderBottom: idx === hoveredData.reports.length - 1 ? 'none' : '1px solid #eee'
                                             }}>
-                                                <h4 style={{ margin: '0 0 4px', fontSize: 13 }}>{r.title}</h4>
-                                                <p style={{ margin: 0, fontSize: 12 }}>{r.description}</p>
+                                                {/* Community incident badge */}
+                                                {r.isCommunityIncident && (
+                                                    <div style={{
+                                                        display: 'flex', alignItems: 'center', gap: 5,
+                                                        fontSize: 10, fontWeight: 700, textTransform: 'uppercase',
+                                                        color: r.communityColor || '#ff6b35',
+                                                        marginBottom: 5, letterSpacing: '0.06em'
+                                                    }}>
+                                                        <span style={{ width: 7, height: 7, borderRadius: '50%', background: r.communityColor || '#ff6b35', display: 'inline-block', flexShrink: 0 }} />
+                                                        {r.areaName} · Community Incident
+                                                    </div>
+                                                )}
+                                                <h4 style={{ margin: '0 0 4px', fontSize: 13 }}>
+                                                    {r.title || r.content?.slice(0, 60)}
+                                                </h4>
+                                                <p style={{ margin: 0, fontSize: 12 }}>
+                                                    {r.description || r.content}
+                                                </p>
                                                 <div style={{
                                                     marginTop: 6, fontSize: 10, fontWeight: 'bold',
                                                     textTransform: 'uppercase', letterSpacing: '0.04em',

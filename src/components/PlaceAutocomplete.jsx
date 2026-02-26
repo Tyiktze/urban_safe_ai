@@ -1,88 +1,124 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Search, MapPin } from 'lucide-react';
 
+/**
+ * PlaceAutocomplete
+ * Uses the classic google.maps.places.Autocomplete API attached to a real <input>.
+ * Supports:
+ *  - Typing and selecting from the dropdown (standard autocomplete)
+ *  - Pressing Enter without selecting → geocodes whatever text is in the box
+ *  - Paste + Enter also works
+ */
 export default function PlaceAutocomplete({ onPlaceSelect, darkMode = true }) {
-    const containerRef = useRef(null);
+    const inputRef = useRef(null);
     const autocompleteRef = useRef(null);
     const onPlaceSelectRef = useRef(onPlaceSelect);
+    const [isFocused, setIsFocused] = useState(false);
 
-    // Update the ref whenever the prop changes
+    // Keep callback ref current
     useEffect(() => {
         onPlaceSelectRef.current = onPlaceSelect;
     }, [onPlaceSelect]);
 
-    // Handle theme changes
     useEffect(() => {
-        if (autocompleteRef.current) {
-            // Some modern Google components support a theme attribute
-            // We also update the class on the container for CSS overrides
-            if (darkMode) {
-                autocompleteRef.current.setAttribute('theme', 'dark');
-            } else {
-                autocompleteRef.current.setAttribute('theme', 'light');
+        if (!inputRef.current) return;
+
+        // Retry until Google Maps Places API is ready
+        let attempts = 0;
+        const tryInit = () => {
+            attempts++;
+            if (
+                window.google &&
+                window.google.maps &&
+                window.google.maps.places &&
+                window.google.maps.places.Autocomplete
+            ) {
+                initAutocomplete();
+            } else if (attempts < 30) {
+                setTimeout(tryInit, 300);
             }
-        }
-    }, [darkMode]);
+        };
+        tryInit();
 
-    useEffect(() => {
-        // Wait for google maps to be available
-        if (!containerRef.current || !window.google || !window.google.maps || !window.google.maps.places) {
-            return;
-        }
+        function initAutocomplete() {
+            if (autocompleteRef.current) return; // already initialized
 
-        // Only initialize once
-        if (autocompleteRef.current) return;
+            const ac = new google.maps.places.Autocomplete(inputRef.current, {
+                fields: ['formatted_address', 'geometry', 'name'],
+            });
+            autocompleteRef.current = ac;
 
-        // Clear container (especially helpful for React 18/19 double-invoking useEffect)
-        containerRef.current.innerHTML = '';
-
-        try {
-            // Use the new PlaceAutocompleteElement
-            const autocomplete = new google.maps.places.PlaceAutocompleteElement();
-            autocomplete.style.width = '100%';
-            autocomplete.requestedFields = ['location', 'viewport'];
-
-            // Set initial theme
-            if (darkMode) {
-                autocomplete.setAttribute('theme', 'dark');
-            } else {
-                autocomplete.setAttribute('theme', 'light');
-            }
-
-            autocompleteRef.current = autocomplete;
-            containerRef.current.appendChild(autocomplete);
-            // ... existing code ...
-
-            const listener = (event) => {
-                console.log("PlaceAutocomplete selection event triggered:", event.type);
-
-                // USER REQUEST: Just use the string value for smart geocoding
-                const address = autocomplete.value;
-
-                console.log("Passing address for geocoding:", address);
-
+            // User picks an item from the dropdown
+            ac.addListener('place_changed', () => {
+                const place = ac.getPlace();
+                const address = place.formatted_address || place.name || inputRef.current.value;
                 if (address && onPlaceSelectRef.current) {
                     onPlaceSelectRef.current(address);
                 }
-            };
-
-            // Register selection events
-            autocomplete.addEventListener('gmp-placeselect', listener);
-            autocomplete.addEventListener('gmp-select', listener);
-            autocomplete.addEventListener('change', listener);
-
-        } catch (error) {
-            console.error("Error initializing PlaceAutocompleteElement:", error);
+            });
         }
 
         return () => {
-            // Cleanup logic if needed
+            // Cleanup google listener if needed
+            if (autocompleteRef.current && window.google) {
+                google.maps.event.clearInstanceListeners(autocompleteRef.current);
+            }
         };
     }, []);
 
+    const handleKeyDown = (e) => {
+        if (e.key === 'Enter') {
+            // Prevent the default form submit that could close any parent forms
+            e.preventDefault();
+            const value = inputRef.current?.value?.trim();
+            if (value && onPlaceSelectRef.current) {
+                // Give the Autocomplete dropdown a moment to resolve,
+                // then fall back to geocoding the raw text if no place was chosen
+                setTimeout(() => {
+                    const place = autocompleteRef.current?.getPlace?.();
+                    if (!place || !place.geometry) {
+                        // No dropdown selection — geocode whatever the user typed
+                        onPlaceSelectRef.current(value);
+                    }
+                }, 50);
+            }
+        }
+    };
+
     return (
-        <div
-            ref={containerRef}
-            className={`custom-autocomplete-container ${darkMode ? 'dark' : 'light'}`}
-        />
+        <div style={{ position: 'relative', width: '100%', display: 'flex', alignItems: 'center' }}>
+            <Search
+                size={16}
+                style={{
+                    position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)',
+                    color: isFocused ? 'var(--accent-orange)' : 'var(--text-secondary)',
+                    pointerEvents: 'none', zIndex: 1, transition: 'color 0.2s'
+                }}
+            />
+            <input
+                ref={inputRef}
+                type="text"
+                placeholder="Search address or location..."
+                onFocus={() => setIsFocused(true)}
+                onBlur={() => setIsFocused(false)}
+                onKeyDown={handleKeyDown}
+                style={{
+                    width: '100%',
+                    height: 44,
+                    background: isFocused
+                        ? (darkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)')
+                        : (darkMode ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.02)'),
+                    border: `1px solid ${isFocused ? 'var(--accent-orange)' : 'var(--glass-border)'}`,
+                    borderRadius: 12,
+                    paddingLeft: 40,
+                    paddingRight: 16,
+                    color: 'var(--text-primary)',
+                    fontFamily: 'inherit',
+                    fontSize: 14,
+                    outline: 'none',
+                    transition: 'all 0.2s ease',
+                }}
+            />
+        </div>
     );
 }

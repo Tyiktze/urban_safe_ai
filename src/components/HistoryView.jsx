@@ -20,7 +20,8 @@ export default function HistoryView({
     onCenterChanged,
     map,
     mapEngine,
-    darkMode
+    darkMode,
+    user
 }) {
     return (
         <div className="history-expanded-view">
@@ -31,6 +32,7 @@ export default function HistoryView({
                 onSolve={handleSolveReport}
                 onEdit={handleEditReport}
                 isHistoryView={true}
+                user={user}
             />
             <div className="history-stats-sidebar glass">
                 <h3>Impact Summary</h3>

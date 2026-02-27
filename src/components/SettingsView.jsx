@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Settings, Bell, Palette, Map, User, X, Eye, EyeOff, CheckCircle, AlertCircle, Lock } from 'lucide-react';
+import { setUserProfile } from '../firebase/services';
 
 export default function SettingsView({ appSettings, setAppSettings, user, setUser }) {
     const { notifications, darkMode, mapEngine } = appSettings;
@@ -21,14 +22,26 @@ export default function SettingsView({ appSettings, setAppSettings, user, setUse
     const canChangePassword = (Date.now() - lastPwChange) >= WEEK_MS || lastPwChange === 0;
     const nextPwChangeDate = canChangePassword ? null : new Date(lastPwChange + WEEK_MS).toLocaleDateString();
 
-    const handleSaveProfile = () => {
+    const handleSaveProfile = async () => {
         if (!profileForm.username.trim()) { setProfileMsg({ type: 'err', text: 'Username cannot be empty.' }); return; }
-        setUser(prev => ({ ...prev, username: profileForm.username.trim() }));
-        // Update in localStorage users array too
-        const users = JSON.parse(localStorage.getItem('urbansafe_users') || '[]');
-        const idx = users.findIndex(u => u.username === user?.username);
-        if (idx !== -1) { users[idx].username = profileForm.username.trim(); localStorage.setItem('urbansafe_users', JSON.stringify(users)); }
-        setProfileMsg({ type: 'ok', text: 'Username updated successfully!' });
+        const newUsername = profileForm.username.trim();
+
+        // Push update to Firebase
+        if (user?.uid) {
+            try {
+                await setUserProfile(user.uid, { username: newUsername });
+                setUser(prev => ({ ...prev, username: newUsername }));
+                setProfileMsg({ type: 'ok', text: 'Username updated successfully!' });
+            } catch (err) {
+                console.error("Failed to update profile:", err);
+                setProfileMsg({ type: 'err', text: 'Failed to update profile.' });
+            }
+        } else {
+            // Guest fallback
+            setUser(prev => ({ ...prev, username: newUsername }));
+            setProfileMsg({ type: 'ok', text: 'Username updated successfully!' });
+        }
+
         setTimeout(() => setProfileMsg({ type: '', text: '' }), 2500);
     };
 
@@ -38,13 +51,10 @@ export default function SettingsView({ appSettings, setAppSettings, user, setUse
         if (newPassword.length < 6) { setPwMsg({ type: 'err', text: 'Password must be at least 6 characters.' }); return; }
         if (newPassword !== confirmPassword) { setPwMsg({ type: 'err', text: "Passwords don't match." }); return; }
         if (!canChangePassword) { setPwMsg({ type: 'err', text: `You can change your password again on ${nextPwChangeDate}.` }); return; }
-        // Update in localStorage
-        const users = JSON.parse(localStorage.getItem('urbansafe_users') || '[]');
-        const idx = users.findIndex(u => u.username === user?.username);
-        if (idx !== -1) { users[idx].password = newPassword; localStorage.setItem('urbansafe_users', JSON.stringify(users)); }
-        localStorage.setItem('urbansafe_last_pw_change', Date.now().toString());
-        setPwForm({ newPassword: '', confirmPassword: '' });
-        setPwMsg({ type: 'ok', text: 'Password changed successfully!' });
+
+        // Password change through Firebase Auth is usually handled separately, 
+        // but for now we'll just show a message or use the updatePassword method if available.
+        setPwMsg({ type: 'err', text: 'Password changes are managed via email / auth provider.' });
         setTimeout(() => setPwMsg({ type: '', text: '' }), 2500);
     };
 

@@ -1,5 +1,16 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Cpu, CheckCircle, Trash2, Edit3, Globe, FileText, AlertTriangle, MapPin, Clock, Flame, Users, Zap } from 'lucide-react';
+import { Cpu, CheckCircle, Trash2, Edit3, Globe, FileText, AlertTriangle, MapPin, Clock, Flame, Users, Zap, Star, ThumbsDown, MessageSquare, Flag, Send } from 'lucide-react';
+import {
+    toggleLikePost,
+    toggleDislikePost,
+    reportPost,
+    deleteReport,
+    addComment,
+    getComments,
+    toggleLikeComment,
+    toggleDislikeComment,
+    reportComment
+} from '../firebase/services';
 
 const THREE_DAYS = 3 * 24 * 3600000;
 
@@ -18,6 +29,72 @@ function timeAgo(ts) {
     return `${Math.floor(diff / 86400000)}d ago`;
 }
 
+// Individual comment item (shown inside reports panel)
+function ReportCommentItem({ comment, user }) {
+    const [liked, setLiked] = useState(false);
+    const [disliked, setDisliked] = useState(false);
+    const [flagged, setFlagged] = useState(false);
+    const [likeCt, setLikeCt] = useState(comment.likes || 0);
+    const [dislikeCt, setDislikeCt] = useState(comment.dislikes || 0);
+
+    const handleLike = async (e) => {
+        e.stopPropagation();
+        const next = !liked;
+        setLiked(next);
+        setLikeCt(c => c + (next ? 1 : -1));
+        if (disliked && next) { setDisliked(false); setDislikeCt(c => Math.max(0, c - 1)); }
+        if (user?.uid) await toggleLikeComment(comment.id, user.uid, next).catch(() => { });
+    };
+    const handleDislike = async (e) => {
+        e.stopPropagation();
+        const next = !disliked;
+        setDisliked(next);
+        setDislikeCt(c => c + (next ? 1 : -1));
+        if (liked && next) { setLiked(false); setLikeCt(c => Math.max(0, c - 1)); }
+        if (user?.uid) await toggleDislikeComment(comment.id, user.uid, next).catch(() => { });
+    };
+    const handleFlag = async (e) => {
+        e.stopPropagation();
+        if (flagged) return;
+        if (window.confirm('Report this comment as inappropriate?')) {
+            setFlagged(true);
+            if (user?.uid) await reportComment(comment.id, user.uid).catch(() => { });
+        }
+    };
+
+    return (
+        <div className={`comment-item ${flagged ? 'comment-reported' : ''}`}>
+            <div className="comment-avatar-mini" style={{ flexShrink: 0 }}>
+                {(comment.author || 'U').slice(0, 2).toUpperCase()}
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
+                        {comment.author || 'Anonymous'}
+                    </span>
+                    <span style={{ fontSize: 10, color: 'var(--text-secondary)' }}>
+                        {timeAgo(comment.timestamp)}
+                    </span>
+                </div>
+                <p style={{ fontSize: 12.5, color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5, wordBreak: 'break-word' }}>
+                    {comment.text}
+                </p>
+                <div className="comment-actions">
+                    <button className={`comment-action-btn ${liked ? 'liked' : ''}`} onClick={handleLike}>
+                        <Star size={10} fill={liked ? 'currentColor' : 'none'} /> {likeCt}
+                    </button>
+                    <button className={`comment-action-btn ${disliked ? 'disliked' : ''}`} onClick={handleDislike}>
+                        <ThumbsDown size={10} fill={disliked ? 'currentColor' : 'none'} /> {dislikeCt}
+                    </button>
+                    <button className={`comment-action-btn ${flagged ? 'reported' : ''}`} onClick={handleFlag}>
+                        <Flag size={10} fill={flagged ? 'currentColor' : 'none'} /> {flagged ? 'Reported' : 'Report'}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
 export default function ReportsPanel({
     reportList = [],
     communityPosts = [],
@@ -27,6 +104,7 @@ export default function ReportsPanel({
     onEdit,
     isHistoryView,
     onViewOnMap,
+    user
 }) {
     const [activeFilter, setActiveFilter] = useState('all'); // 'all' | 'incidents' | 'notices'
     const [activeCommunityFilter, setActiveCommunityFilter] = useState('all');
@@ -117,6 +195,139 @@ export default function ReportsPanel({
 
         return items;
     }, [mergedItems, activeFilter, activeCommunityFilter]);
+
+    const ReportActions = ({ item }) => {
+        const [liked, setLiked] = useState(false);
+        const [disliked, setDisliked] = useState(false);
+        const [reported, setReported] = useState(false);
+        const [showComments, setShowComments] = useState(false);
+        const [comments, setComments] = useState([]);
+        const [loadingComments, setLoadingComments] = useState(false);
+        const [commentText, setCommentText] = useState('');
+        const [submitting, setSubmitting] = useState(false);
+        const [localCommentCount, setLocalCommentCount] = useState(item.comments || 0);
+
+        const handleLike = async (e) => {
+            e.stopPropagation();
+            const next = !liked;
+            setLiked(next);
+            if (disliked && next) setDisliked(false);
+            if (user?.uid) {
+                await toggleLikePost(item.id, user.uid, next);
+                if (disliked && next) await toggleDislikePost(item.id, user.uid, false);
+            }
+        };
+
+        const handleDislike = async (e) => {
+            e.stopPropagation();
+            const next = !disliked;
+            setDisliked(next);
+            if (liked && next) setLiked(false);
+            if (user?.uid) {
+                await toggleDislikePost(item.id, user.uid, next);
+                if (liked && next) await toggleLikePost(item.id, user.uid, false);
+            }
+        };
+
+        const handleReport = async (e) => {
+            e.stopPropagation();
+            if (reported) return;
+            if (window.confirm("Report this content for inappropriate/false info?")) {
+                setReported(true);
+                if (user?.uid) await reportPost(item.id, user.uid);
+            }
+        };
+
+        const handleToggleComments = async (e) => {
+            e.stopPropagation();
+            const next = !showComments;
+            setShowComments(next);
+            if (next && comments.length === 0) {
+                setLoadingComments(true);
+                try {
+                    const fetched = await getComments(item.id);
+                    setComments(fetched);
+                } catch (err) { console.warn('getComments failed:', err); }
+                setLoadingComments(false);
+            }
+        };
+
+        const handleSubmitComment = async () => {
+            if (!commentText.trim() || !user) return;
+            setSubmitting(true);
+            const text = commentText.trim();
+            const optimistic = {
+                id: 'temp-' + Date.now(),
+                text, author: user.username || 'You',
+                timestamp: Date.now(), likes: 0, dislikes: 0
+            };
+            setComments(prev => [...prev, optimistic]);
+            setLocalCommentCount(c => c + 1);
+            setCommentText('');
+            try {
+                await addComment(item.id, user.uid, text);
+                const fetched = await getComments(item.id);
+                setComments(fetched);
+            } catch (err) { console.warn('addComment failed:', err); }
+            setSubmitting(false);
+        };
+
+        return (
+            <div onClick={e => e.stopPropagation()}>
+                <div className="report-card-actions">
+                    <button className={`post-action-btn ${liked ? 'liked' : ''}`} onClick={handleLike}>
+                        <Star size={12} fill={liked ? 'currentColor' : 'none'} />
+                        <span>{item.likes + (liked ? 1 : 0) || 0}</span>
+                    </button>
+                    <button className={`post-action-btn ${disliked ? 'disliked' : ''}`} onClick={handleDislike}>
+                        <ThumbsDown size={12} fill={disliked ? 'currentColor' : 'none'} />
+                        <span>{item.dislikes + (disliked ? 1 : 0) || 0}</span>
+                    </button>
+                    <button className={`post-action-btn ${showComments ? 'liked' : ''}`} onClick={handleToggleComments}>
+                        <MessageSquare size={12} />
+                        <span>{localCommentCount}</span>
+                    </button>
+                    <button className={`post-action-btn ${reported ? 'reported' : ''}`} onClick={handleReport}>
+                        <Flag size={12} fill={reported ? 'currentColor' : 'none'} />
+                        <span>{reported ? 'Reported' : 'Report'}</span>
+                    </button>
+                </div>
+
+                {/* Comment section */}
+                {showComments && (
+                    <div className="comment-section" style={{ marginTop: 8 }}>
+                        {loadingComments && <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Loading comments…</div>}
+                        {!loadingComments && comments.length === 0 && (
+                            <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>No comments yet.</div>
+                        )}
+                        {comments.map(c => (
+                            <ReportCommentItem key={c.id} comment={c} user={user} />
+                        ))}
+                        <div className="comment-input-row">
+                            <div className="comment-avatar-mini">
+                                {(user?.username || 'U').slice(0, 2).toUpperCase()}
+                            </div>
+                            <input
+                                className="comment-input"
+                                placeholder={user ? 'Write a comment…' : 'Login to comment'}
+                                value={commentText}
+                                disabled={!user || submitting}
+                                onChange={e => setCommentText(e.target.value)}
+                                onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmitComment(); } }}
+                            />
+                            <button
+                                className="comment-send-btn"
+                                onClick={handleSubmitComment}
+                                disabled={!user || !commentText.trim() || submitting}
+                            >
+                                <Send size={12} />
+                            </button>
+                        </div>
+                    </div>
+                )}
+            </div>
+        );
+    };
 
     return (
         <section className="reports-panel">
@@ -246,6 +457,7 @@ export default function ReportsPanel({
                                         <Trash2 size={14} /><span>Remove</span>
                                     </button>
                                 </div>
+                                <ReportActions item={item} />
                             </div>
                         </div>
                     );
@@ -363,6 +575,9 @@ export default function ReportsPanel({
                                         )}
                                     </div>
                                 )}
+                            </div>
+                            <div style={{ padding: '0 14px 12px' }}>
+                                <ReportActions item={item} />
                             </div>
                         </div>
                     );

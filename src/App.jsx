@@ -10,6 +10,22 @@ import DashboardView from './components/DashboardView';
 import HistoryView from './components/HistoryView';
 import CommunityView, { INITIAL_POSTS } from './components/CommunityView';
 import SettingsView from './components/SettingsView';
+import {
+  onAuthChange,
+  signOutUser,
+  setUserProfile,
+  getReports,
+  getUserSettings,
+  setUserSettings,
+  getUserJoinedCommunities,
+  db,
+  createReport,
+  deleteReport,
+  getNotifications,
+  markNotificationRead,
+  deleteNotification
+} from './firebase/services';
+import { doc, getDoc } from 'firebase/firestore';
 
 const reports = [];
 
@@ -55,14 +71,8 @@ function App() {
   const [communityPostModal, setCommunityPostModal] = useState({ open: false, audience: 'community' });
   // Seed communityPosts from INITIAL_POSTS filtered to default-joined communities (ids 1 & 4)
   // so Recent Reports is populated immediately on page load, even before visiting the community tab.
-  const [communityPosts, setCommunityPosts] = React.useState(() => {
-    try {
-      const savedJoined = JSON.parse(localStorage.getItem('urbansafe_joined_ids') || '[1,4]');
-      return INITIAL_POSTS.filter(p => savedJoined.includes(p.communityId));
-    } catch (_) {
-      return INITIAL_POSTS.filter(p => [1, 4].includes(p.communityId));
-    }
-  });
+  const [communityPosts, setCommunityPosts] = React.useState([]);
+  const [joinedIds, setJoinedIds] = React.useState([1, 4]); // Default IDs if not logged in
 
   const [showChooseOnMapPin, setShowChooseOnMapPin] = useState(false);
   const [chosenPinLocation, setChosenPinLocation] = useState(null);
@@ -82,6 +92,101 @@ function App() {
       document.body.classList.remove('light-theme');
     }
   }, [appSettings.darkMode]);
+
+  // Load reports from Firestore on mount
+  React.useEffect(() => {
+    getReports().then(reports => {
+      if (reports && reports.length > 0) {
+        setReportList(reports.map(r => ({ ...r, isUserMade: r.user_id === user?.uid })));
+      }
+    }).catch(err => console.warn("Failed to fetch reports:", err));
+  }, [user?.uid]);
+
+  // Handle Authentication State
+  React.useEffect(() => {
+    const unsubscribe = onAuthChange(async (firebaseUser) => {
+      if (firebaseUser) {
+        // Fetch profile, settings, and joined communities
+        const [userDoc, settings, joined] = await Promise.all([
+          getDoc(doc(db, "users", firebaseUser.uid)),
+          getUserSettings(firebaseUser.uid),
+          getUserJoinedCommunities(firebaseUser.uid)
+        ]);
+
+        if (userDoc.exists()) {
+          setUser({ ...userDoc.data(), uid: firebaseUser.uid });
+        } else {
+          setUser({
+            username: firebaseUser.displayName || firebaseUser.email.split('@')[0],
+            email: firebaseUser.email,
+            avatar: (firebaseUser.displayName || 'U').slice(0, 2).toUpperCase(),
+            role: 'user',
+            reputation_score: 100,
+            uid: firebaseUser.uid
+          });
+        }
+
+        if (settings) {
+          setAppSettings({
+            notifications: settings.notif_toggle ?? true,
+            darkMode: settings.dark_mode ?? true,
+            mapEngine: settings.map_style || 'google'
+          });
+        }
+
+        if (joined && joined.length > 0) {
+          setJoinedIds(joined);
+        }
+
+        // Fetch notifications from Firebase
+        const fbNotifs = await getNotifications(firebaseUser.uid);
+        if (fbNotifs && fbNotifs.length > 0) {
+          setNotifications(fbNotifs.map(n => ({
+            id: n.id,
+            text: n.message,
+            time: n.time ? `${Math.floor((Date.now() - n.time) / 60000)}m ago` : "Recently",
+            unread: !n.is_read,
+            type: n.type
+          })));
+        }
+
+        setShowAuth(false);
+      } else {
+        setUser(null);
+        setShowAuth(true);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Persist settings changes
+  React.useEffect(() => {
+    if (user?.uid) {
+      setUserSettings(user.uid, {
+        dark_mode: appSettings.darkMode,
+        map_style: appSettings.mapEngine,
+        notif_toggle: appSettings.notifications
+      });
+    }
+  }, [appSettings, user?.uid]);
+
+  // Sync community posts when joinedIds change
+  React.useEffect(() => {
+    const filtered = INITIAL_POSTS.filter(p => joinedIds.includes(p.communityId));
+    setCommunityPosts(filtered);
+  }, [joinedIds]);
+
+  const handleLogout = async () => {
+    try {
+      await signOutUser();
+      setNotifications(prev => [
+        { id: Date.now(), text: "Successfully logged out.", time: "Just now", unread: true },
+        ...prev
+      ]);
+    } catch (err) {
+      console.error("Logout failed:", err);
+    }
+  };
 
   // Memoized filtered lists to prevent infinite re-renders
   const publicReports = React.useMemo(() =>
@@ -279,7 +384,11 @@ function App() {
 
   const handleDeleteReport = React.useCallback((id) => {
     setReportList(prev => prev.filter(r => r.id !== id));
-  }, []);
+    // Persist deletion to Firestore
+    if (user?.uid) {
+      deleteReport(id).catch(err => console.error("Failed to delete report from database:", err));
+    }
+  }, [user?.uid]);
 
   const handleSolveReport = React.useCallback((id) => {
     setReportList(prev => prev.map(r =>
@@ -492,8 +601,19 @@ function App() {
       setCommunityPosts(prev => [...newCommunityPosts, ...prev]);
     }
 
-    // Add immediately
+    // Add immediately (optimistic update)
     setReportList(prev => [newReport, ...prev]);
+
+    // Persist to Firestore if user is logged in
+    if (user?.uid) {
+      createReport({
+        ...newReport,
+        user_id: user.uid
+      }).then(firestoreId => {
+        setReportList(prev => prev.map(r => r.id === reportId ? { ...r, id: firestoreId } : r));
+      }).catch(err => console.error("Failed to persist report:", err));
+    }
+
     setLastReportTime(Date.now());
     setCooldownRemaining(30);
 
@@ -665,7 +785,9 @@ function App() {
         onTabChange={setActiveTab}
         user={user}
         onOpenAuth={() => setShowAuth(true)}
-        onLogout={() => setUser(null)}
+        onLogout={handleLogout}
+        joinedCommunities={joinedCommunities}
+        allCommunities={allCommunities}
       />
 
       <main className="main-layout">
@@ -769,16 +891,15 @@ function App() {
               genAI={genAI}
               isLoaded={isLoaded}
               userLocation={userLocation}
-              externalPostModalOpen={communityPostModal.open}
-              initialAudience={communityPostModal.audience}
-              onCloseExternalPostModal={() => setCommunityPostModal({ open: false, audience: 'community' })}
+              user={user}
+              onJoinedCommunitiesChange={setJoinedIds}
+              initialJoinedIds={joinedIds}
+              communityPostModal={communityPostModal}
+              setCommunityPostModal={setCommunityPostModal}
               onConvertToReport={(description, pinnedLoc) => {
                 setActiveTab('grid');
                 setTimeout(() => handleAddReport(description, pinnedLoc), 80);
               }}
-              onPostsChange={setCommunityPosts}
-              onJoinedCommunitiesChange={setJoinedCommunities}
-              onAllCommunitiesChange={setAllCommunities}
             />
           </div>
           {activeTab === 'settings' && (
@@ -818,6 +939,7 @@ function App() {
         <AuthModal
           onClose={() => setShowAuth(false)}
           onLogin={(userData) => setUser(userData)}
+          forceMode={!user}
         />
       )}
 

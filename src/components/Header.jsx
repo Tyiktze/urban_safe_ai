@@ -1,6 +1,7 @@
 import React from 'react';
 import { Shield, Search, Bell, X, AlertTriangle, Users, ChevronRight } from 'lucide-react';
 import PlaceAutocomplete from './PlaceAutocomplete';
+import { markNotificationRead, deleteNotification } from '../firebase/services';
 
 export default function Header({
     isLoaded,
@@ -23,18 +24,27 @@ export default function Header({
     const toggleNotifications = () => setShowNotifications(!showNotifications);
 
     const markAllRead = () => {
+        const unreadIds = notifications.filter(n => n.unread).map(n => n.id);
         setNotifications(notifications.map(n => ({ ...n, unread: false })));
+        unreadIds.forEach(async (id) => {
+            try { await markNotificationRead(id); }
+            catch (err) { console.warn("Failed to mark notif as read:", id); }
+        });
     };
 
-    const markRead = (id) => {
+    const markRead = async (id) => {
         setNotifications(notifications.map(n =>
             n.id === id ? { ...n, unread: false } : n
         ));
+        try { await markNotificationRead(id); }
+        catch (err) { console.warn("Failed to mark notif as read:", id); }
     };
 
-    const dismissNotif = (id, e) => {
+    const dismissNotif = async (id, e) => {
         e.stopPropagation();
         setNotifications(notifications.filter(n => n.id !== id));
+        try { await deleteNotification(id); }
+        catch (err) { console.warn("Failed to delete notif:", id); }
     };
 
     // Close menu when clicking outside

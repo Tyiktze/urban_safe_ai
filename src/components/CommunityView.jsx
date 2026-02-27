@@ -1,12 +1,30 @@
-import React, { useState, useMemo, useRef, useCallback } from 'react';
+import React, { useState, useMemo, useRef, useCallback, useEffect } from 'react';
 import { GoogleMap, MarkerF } from '@react-google-maps/api';
 import {
     Users, Plus, Search, Globe, Lock, Hash,
     MessageSquare, MapPin, CheckCircle, X, ChevronRight,
-    Flame, Clock, Send, Cpu, Star,
+    Flame, Clock, Send, Cpu, Star, ThumbsDown, Flag,
     Upload, AlertTriangle, FileText, Zap, Info,
     Navigation, ArrowRight, Trash2, UserCheck, UserX, ShieldCheck
 } from 'lucide-react';
+import {
+    createCommunity,
+    getCommunities,
+    updateCommunityMemberCount,
+    createCommunityPost,
+    getCommunityPosts,
+    getPostsForCommunities,
+    deleteCommunityPost,
+    syncUserJoinedCommunities,
+    toggleLikePost,
+    toggleDislikePost,
+    reportPost,
+    addComment,
+    getComments,
+    toggleLikeComment,
+    toggleDislikeComment,
+    reportComment
+} from '../firebase/services';
 
 
 // ─── Map style (dark) ───────────────────────────────────────────────────────
@@ -66,6 +84,8 @@ const H = 3600000;
 const D = 86400000;
 // Bump this whenever INITIAL_POSTS changes so stale localStorage is replaced
 const POSTS_VERSION = 'v4-english';
+
+
 export const INITIAL_POSTS = [
     // ── Downtown Watch (id: 1) ─────────────────────────────────────────
     { id: 101, type: 'post', author: 'Ahmad R.', avatar: 'Ahmad', timestamp: NOW - 10 * 60000, content: 'Large pothole on Jalan Sultan Badlishah near the bus stop — been there 2 weeks and is dangerous for motorcyclists. Already reported to the JKR Kedah complaints portal.', communityId: 1, communityName: 'Downtown Watch', communityColor: '#ff6b35', category: 'infrastructure', severity: 'medium', image: null, likes: 14, comments: 3 },
@@ -194,16 +214,168 @@ function DiscoverCard({ community, onSelect }) {
     );
 }
 
-// Post card in feed
-function PostCard({ post, onDelete, canDelete }) {
+// Individual comment with like/dislike/report interactions
+function CommentItem({ comment, user }) {
     const [liked, setLiked] = useState(false);
+    const [disliked, setDisliked] = useState(false);
+    const [reported, setReported] = useState(false);
+    const [likeCt, setLikeCt] = useState(comment.likes || 0);
+    const [dislikeCt, setDislikeCt] = useState(comment.dislikes || 0);
+
+    const handleLike = async () => {
+        const next = !liked;
+        setLiked(next);
+        setLikeCt(c => c + (next ? 1 : -1));
+        if (disliked && next) { setDisliked(false); setDislikeCt(c => Math.max(0, c - 1)); }
+        if (user?.uid) await toggleLikeComment(comment.id, user.uid, next).catch(() => { });
+    };
+
+    const handleDislike = async () => {
+        const next = !disliked;
+        setDisliked(next);
+        setDislikeCt(c => c + (next ? 1 : -1));
+        if (liked && next) { setLiked(false); setLikeCt(c => Math.max(0, c - 1)); }
+        if (user?.uid) await toggleDislikeComment(comment.id, user.uid, next).catch(() => { });
+    };
+
+    const handleReport = async () => {
+        if (reported) return;
+        if (window.confirm('Report this comment as inappropriate?')) {
+            setReported(true);
+            if (user?.uid) await reportComment(comment.id, user.uid).catch(() => { });
+        }
+    };
+
+    function timeAgoComment(ts) {
+        if (!ts) return '';
+        const diff = Date.now() - ts;
+        if (diff < 60000) return 'Just now';
+        if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+        if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
+        return `${Math.floor(diff / 86400000)}d ago`;
+    }
+
+    return (
+        <div className={`comment-item ${reported ? 'comment-reported' : ''}`}>
+            <div className="comment-avatar-mini" style={{ flexShrink: 0 }}>
+                {(comment.author || comment.user_id || 'U').slice(0, 2).toUpperCase()}
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
+                        {comment.author || 'Anonymous'}
+                    </span>
+                    <span style={{ fontSize: 10, color: 'var(--text-secondary)' }}>
+                        {timeAgoComment(comment.timestamp)}
+                    </span>
+                </div>
+                <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5, wordBreak: 'break-word' }}>
+                    {comment.text}
+                </p>
+                <div className="comment-actions">
+                    <button className={`comment-action-btn ${liked ? 'liked' : ''}`} onClick={handleLike}>
+                        <Star size={10} fill={liked ? 'currentColor' : 'none'} /> {likeCt}
+                    </button>
+                    <button className={`comment-action-btn ${disliked ? 'disliked' : ''}`} onClick={handleDislike}>
+                        <ThumbsDown size={10} fill={disliked ? 'currentColor' : 'none'} /> {dislikeCt}
+                    </button>
+                    <button className={`comment-action-btn ${reported ? 'reported' : ''}`} onClick={handleReport}>
+                        <Flag size={10} fill={reported ? 'currentColor' : 'none'} /> {reported ? 'Reported' : 'Report'}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// Post card in feed
+function PostCard({ post, onDelete, canDelete, user }) {
+    const [liked, setLiked] = useState(false);
+    const [disliked, setDisliked] = useState(false);
+    const [reported, setReported] = useState(false);
     const [confirmingDelete, setConfirmingDelete] = useState(false);
+    const [showComments, setShowComments] = useState(false);
+    const [comments, setComments] = useState([]);
+    const [loadingComments, setLoadingComments] = useState(false);
+    const [commentText, setCommentText] = useState('');
+    const [submittingComment, setSubmittingComment] = useState(false);
+    const [localCommentCount, setLocalCommentCount] = useState(post.comments || 0);
+
     const colors = SEVERITY_COLORS[post.severity] || SEVERITY_COLORS.medium;
     const isIncident = post.type === 'incident';
     const isOwn = post.author === 'You';
 
+    const handleLike = async () => {
+        const next = !liked;
+        setLiked(next);
+        if (disliked && next) setDisliked(false);
+        if (user?.uid) {
+            await toggleLikePost(post.id, user.uid, next);
+            if (disliked && next) await toggleDislikePost(post.id, user.uid, false);
+        }
+    };
+
+    const handleDislike = async () => {
+        const next = !disliked;
+        setDisliked(next);
+        if (liked && next) setLiked(false);
+        if (user?.uid) {
+            await toggleDislikePost(post.id, user.uid, next);
+            if (liked && next) await toggleLikePost(post.id, user.uid, false);
+        }
+    };
+
+    const handleReport = async () => {
+        if (reported) return;
+        if (window.confirm("Report this post for inappropriate content?")) {
+            setReported(true);
+            if (user?.uid) await reportPost(post.id, user.uid);
+        }
+    };
+
+    const handleToggleComments = async () => {
+        const next = !showComments;
+        setShowComments(next);
+        if (next && comments.length === 0) {
+            setLoadingComments(true);
+            try {
+                const fetched = await getComments(post.id);
+                setComments(fetched);
+            } catch (e) { console.warn('getComments failed:', e); }
+            setLoadingComments(false);
+        }
+    };
+
+    const handleSubmitComment = async () => {
+        if (!commentText.trim()) return;
+        if (!user) { alert('Please login to comment.'); return; }
+        setSubmittingComment(true);
+        const text = commentText.trim();
+        const tempId = 'temp-' + Date.now();
+        const optimistic = {
+            id: tempId,
+            text,
+            user_id: user.uid,
+            author: user.username || 'You',
+            timestamp: Date.now(),
+            likes: 0, dislikes: 0
+        };
+        setComments(prev => [...prev, optimistic]);
+        setLocalCommentCount(c => c + 1);
+        setCommentText('');
+        try {
+            await addComment(post.id, user.uid, text);
+            // Refresh to get real Firestore IDs
+            const fetched = await getComments(post.id);
+            setComments(fetched);
+        } catch (e) {
+            console.warn('addComment failed:', e);
+        }
+        setSubmittingComment(false);
+    };
+
     return (
-        <div className={`post-card fade-in ${isIncident ? 'post-card-incident' : ''}`}>
+        <div className={`post-card fade-in ${isIncident ? 'post-card-incident' : ''} ${reported ? 'reported' : ''}`}>
             {/* Community label top-left */}
             <div className="post-community-label" style={{ borderColor: post.communityColor + '55', color: post.communityColor }}>
                 <div style={{ width: 7, height: 7, borderRadius: '50%', background: post.communityColor, flexShrink: 0, boxShadow: `0 0 5px ${post.communityColor}99` }} />
@@ -295,17 +467,67 @@ function PostCard({ post, onDelete, canDelete }) {
                 </div>
             )}
 
+            {/* Action buttons */}
             <div className="post-actions">
-                <button className={`post-action-btn ${liked ? 'liked' : ''}`} onClick={() => setLiked(l => !l)}>
+                <button className={`post-action-btn ${liked ? 'liked' : ''}`} onClick={handleLike}>
                     <Star size={13} fill={liked ? 'currentColor' : 'none'} />
                     {post.likes + (liked ? 1 : 0)}
                 </button>
+                <button className={`post-action-btn ${disliked ? 'disliked' : ''}`} onClick={handleDislike}>
+                    <ThumbsDown size={13} fill={disliked ? 'currentColor' : 'none'} />
+                    {post.dislikes + (disliked ? 1 : 0) || 0}
+                </button>
+                <button className={`post-action-btn ${showComments ? 'liked' : ''}`} onClick={handleToggleComments}>
+                    <MessageSquare size={13} />
+                    {localCommentCount}
+                </button>
+                <button className={`post-action-btn ${reported ? 'reported' : ''}`} onClick={handleReport}>
+                    <Flag size={13} fill={reported ? 'currentColor' : 'none'} />
+                    {reported ? 'Reported' : 'Report'}
+                </button>
                 {isIncident && (
-                    <button className="post-action-btn" style={{ color: '#ff8080', borderColor: 'rgba(238,66,102,0.3)' }}>
+                    <button className="post-action-btn" style={{ marginLeft: 'auto', color: '#ff8080', borderColor: 'rgba(238,66,102,0.3)' }}>
                         <MapPin size={13} /> View on Map
                     </button>
                 )}
             </div>
+
+            {/* ── Comment Section ───────────────────── */}
+            {showComments && (
+                <div className="comment-section">
+                    {loadingComments && (
+                        <div style={{ fontSize: 12, color: 'var(--text-secondary)', padding: '8px 0' }}>Loading comments…</div>
+                    )}
+                    {!loadingComments && comments.length === 0 && (
+                        <div style={{ fontSize: 12, color: 'var(--text-secondary)', padding: '6px 0' }}>No comments yet. Be the first!</div>
+                    )}
+                    {comments.map(c => (
+                        <CommentItem key={c.id} comment={c} user={user} />
+                    ))}
+
+                    {/* Input row */}
+                    <div className="comment-input-row">
+                        <div className="comment-avatar-mini">
+                            {(user?.username || 'U').slice(0, 2).toUpperCase()}
+                        </div>
+                        <input
+                            className="comment-input"
+                            placeholder={user ? 'Write a comment…' : 'Login to comment'}
+                            value={commentText}
+                            disabled={!user || submittingComment}
+                            onChange={e => setCommentText(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmitComment(); } }}
+                        />
+                        <button
+                            className="comment-send-btn"
+                            onClick={handleSubmitComment}
+                            disabled={!user || !commentText.trim() || submittingComment}
+                        >
+                            <Send size={13} />
+                        </button>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
@@ -316,36 +538,40 @@ export default function CommunityView({
     genAI,
     isLoaded,
     userLocation,
-    externalPostModalOpen = false,
-    onCloseExternalPostModal,
+    user,
+    onJoinedCommunitiesChange,
+    initialJoinedIds = [1, 4],
+    communityPostModal,
+    setCommunityPostModal,
     onConvertToReport,
     onPostsChange,
-    onJoinedCommunitiesChange,
-    onAllCommunitiesChange,
-    onChooseOnMap,
+    onAllCommunitiesChange
 }) {
-    // Restore join state from localStorage, then build community positions
     const commInitialized = useRef(false);
+
     const [communities, setCommunities] = useState(() => {
-        // Build positions from current location
         const base = buildCommunities(userLocation);
-        // Restore which IDs the user had joined/requested from last session
-        try {
-            const savedJoined = JSON.parse(localStorage.getItem('urbansafe_joined_ids') || '[]');
-            if (savedJoined.length > 0) {
-                return base.map(c => savedJoined.includes(c.id) ? { ...c, joined: true } : c);
-            }
-        } catch (_) { }
-        return base;
+        const joinedSet = new Set(initialJoinedIds);
+        return base.map(c => ({ ...c, joined: joinedSet.has(c.id) }));
     });
 
-    // Persist joined IDs to localStorage whenever communities changes
-    React.useEffect(() => {
-        try {
-            const joinedIds = communities.filter(c => c.joined).map(c => c.id);
-            localStorage.setItem('urbansafe_joined_ids', JSON.stringify(joinedIds));
-        } catch (_) { }
-    }, [communities]);
+    // Sync joined state from initialJoinedIds if they change (e.g. after login)
+    useEffect(() => {
+        const joinedSet = new Set(initialJoinedIds);
+        setCommunities(prev => prev.map(c => ({ ...c, joined: joinedSet.has(c.id) })));
+    }, [initialJoinedIds.join(',')]);
+
+    // Persist joined IDs to Firestore/Parent whenever communities changes
+    useEffect(() => {
+        const currentJoinedIds = communities.filter(c => c.joined).map(c => c.id);
+        if (onJoinedCommunitiesChange) onJoinedCommunitiesChange(currentJoinedIds);
+
+        if (user?.uid) {
+            syncUserJoinedCommunities(user.uid, currentJoinedIds)
+                .catch(err => console.warn('Sync joined communities failed:', err));
+        }
+    }, [communities.filter(c => c.joined).length, user?.uid]);
+
 
     // Track join requests: { communityId, requesterName, requesterId, ts }[]
     const [joinRequests, setJoinRequests] = useState([]);
@@ -373,7 +599,10 @@ export default function CommunityView({
     }, [userLocation]);
 
 
-    // ── Persistent posts: load from localStorage so timestamps survive refresh ──
+    const joinedCommunities = useMemo(() => communities.filter(c => c.joined), [communities]);
+    const joinedIds = useMemo(() => joinedCommunities.map(c => c.id), [joinedCommunities]);
+
+    // ── Posts: start from localStorage / INITIAL_POSTS, then sync with Firebase ──
     const [posts, setPosts] = useState(() => {
         try {
             const version = localStorage.getItem('urbansafe_posts_version');
@@ -385,11 +614,35 @@ export default function CommunityView({
                 }
             }
         } catch (_) { /* ignore parse errors */ }
-        // First load or version mismatch — seed fresh timestamps and save
         localStorage.setItem('urbansafe_posts_version', POSTS_VERSION);
         localStorage.setItem('urbansafe_posts', JSON.stringify(INITIAL_POSTS));
         return INITIAL_POSTS;
     });
+
+    // ── Load communities from Firestore on mount (merged with local hardcoded) ──
+    useEffect(() => {
+        getCommunities().then(fbCommunities => {
+            if (!fbCommunities || fbCommunities.length === 0) return;
+            setCommunities(prev => {
+                const joined = new Set(initialJoinedIds);
+                return fbCommunities.map(c => ({ ...c, joined: joined.has(c.id) }));
+            });
+        }).catch(err => console.warn('Firebase communities fetch failed (offline?):', err));
+    }, [initialJoinedIds.join(',')]);
+
+    // ── Load Firebase posts for joined communities ─────────────────────────────
+    useEffect(() => {
+        if (joinedIds.length === 0) return;
+        getPostsForCommunities(joinedIds).then(fbPosts => {
+            if (!fbPosts || fbPosts.length === 0) return;
+            setPosts(prev => {
+                // Merge: Firebase posts override local ones with same id
+                const fbIds = new Set(fbPosts.map(p => p.id));
+                const localOnly = prev.filter(p => !fbIds.has(p.id));
+                return [...fbPosts, ...localOnly].sort((a, b) => b.timestamp - a.timestamp);
+            });
+        }).catch(err => console.warn('Firebase posts fetch failed (offline?):', err));
+    }, [joinedIds.join(',')]);
     const [activeTab, setActiveTab] = useState('feed'); // 'feed' | 'explore'
     const [feedFilter, setFeedFilter] = useState('all'); // 'all' | 'posts' | 'incidents'
     const [selectedCommunityId, setSelectedCommunityId] = useState(null);
@@ -409,8 +662,6 @@ export default function CommunityView({
     const [, setTimeTick] = useState(0);
     const imgInputRef = useRef(null);
 
-    const joinedCommunities = useMemo(() => communities.filter(c => c.joined), [communities]);
-    const joinedIds = useMemo(() => joinedCommunities.map(c => c.id), [joinedCommunities]);
 
     // Notify App.jsx whenever the joined community list changes (so ReportModal can show audience picker)
     const onJoinedCommunitiesChangeRef = React.useRef(onJoinedCommunitiesChange);
@@ -496,31 +747,31 @@ export default function CommunityView({
 
     // Sync external trigger
     React.useEffect(() => {
-        if (externalPostModalOpen) {
+        if (communityPostModal.open) {
             setNewPost({ content: '', communityIds: [], image: null, imagePreview: null });
             setValidationError('');
             setShowPostModal(true);
         }
-    }, [externalPostModalOpen]);
+    }, [communityPostModal.open]);
 
     const handleClosePostModal = useCallback(() => {
         setShowPostModal(false);
         setValidationError('');
         setNewPost({ content: '', communityIds: [], image: null, imagePreview: null });
-        if (onCloseExternalPostModal) onCloseExternalPostModal();
-    }, [onCloseExternalPostModal]);
+        if (setCommunityPostModal) setCommunityPostModal({ open: false, audience: 'community' });
+    }, [setCommunityPostModal]);
 
     const handleJoin = (id) => {
         const comm = communities.find(c => c.id === id);
         if (!comm) return;
         if (comm.isPrivate) {
-            // Private — send a join request instead of joining directly
             setJoinRequests(prev => [
                 ...prev.filter(r => !(r.communityId === id && r.requesterId === 'me')),
-                { communityId: id, requesterId: 'me', requesterName: 'You', ts: Date.now() }
+                { communityId: id, requesterId: 'me', requesterName: user?.username || 'You', ts: Date.now() }
             ]);
         } else {
             setCommunities(prev => prev.map(c => c.id === id ? { ...c, joined: true, memberCount: c.memberCount + 1 } : c));
+            updateCommunityMemberCount(id, 1).catch(err => console.warn('Sync memberCount failed:', err));
         }
     };
     const handleCancelRequest = (id) => {
@@ -529,6 +780,7 @@ export default function CommunityView({
     const handleLeave = (id) => {
         setCommunities(prev => prev.map(c => c.id === id ? { ...c, joined: false, memberCount: c.memberCount - 1 } : c));
         if (selectedCommunityId === id) setSelectedCommunityId(null);
+        updateCommunityMemberCount(id, -1).catch(err => console.warn('Sync memberCount failed:', err));
     };
     // Owner: approve a join request
     const handleApproveRequest = (req) => {
@@ -542,6 +794,8 @@ export default function CommunityView({
     // Delete a post (owner or self)
     const handleDeletePost = useCallback((postId) => {
         setPosts(prev => prev.filter(p => p.id !== postId));
+        // Also delete from Firebase (may fail silently if it's a local-only post)
+        deleteCommunityPost(postId).catch(err => console.warn('Firebase deletePost failed (local post?):', err));
     }, []);
 
     // ── Sensitive-word list for community names ────────────────────────────────
@@ -563,7 +817,6 @@ export default function CommunityView({
         const lowerName = name.toLowerCase();
         const hit = SENSITIVE_WORDS.find(w => lowerName.includes(w));
         if (hit) {
-            // Reuse validationError state to show the error in the modal
             setValidationError(`Community name contains a prohibited word. Please choose a different name.`);
             return;
         }
@@ -573,15 +826,27 @@ export default function CommunityView({
         const color = palette[communities.length % palette.length];
         const tag = tagList[communities.length % tagList.length];
         const anchor = userLocation || { lat: 6.1248, lng: 100.3673 };
+        const localId = Date.now();
+        const location = offsetLatLng(anchor, (Math.random() - 0.5) * 2, (Math.random() - 0.5) * 2);
+        // Optimistic local update
         setCommunities(prev => [...prev, {
-            id: Date.now(), name, description: newCommunity.description,
+            id: localId, name, description: newCommunity.description,
             memberCount: 1, isPrivate: newCommunity.isPrivate,
             joined: true, color, tag,
-            ownerId: 'me', // marks current user as owner
-            location: offsetLatLng(anchor, (Math.random() - 0.5) * 2, (Math.random() - 0.5) * 2),
+            ownerId: 'me',
+            location,
         }]);
         setNewCommunity({ name: '', description: '', isPrivate: false });
         setShowCreateModal(false);
+        // Push to Firebase
+        createCommunity({
+            name, description: newCommunity.description,
+            isPrivate: newCommunity.isPrivate,
+            color, tag, ownerId: 'me', location,
+        }).then(fbId => {
+            // Replace the local temp id with the Firebase id
+            setCommunities(prev => prev.map(c => c.id === localId ? { ...c, id: fbId } : c));
+        }).catch(err => console.warn('Firebase createCommunity failed:', err));
     };
 
     const handleImageChange = (e) => {
@@ -595,10 +860,11 @@ export default function CommunityView({
     const publishPost = useCallback((postData, type = 'post', loc = null) => {
         const cid = postData.communityIds[0];
         const community = communities.find(c => c.id === cid);
-        setPosts(prev => [{
-            id: Date.now(), type,
+        const localId = Date.now();
+        const newPostObj = {
+            id: localId, type,
             author: 'You', avatar: 'Yo',
-            timestamp: Date.now(),
+            timestamp: localId,
             content: postData.content,
             communityId: cid || joinedIds[0],
             communityName: community?.name || joinedCommunities[0]?.name || 'My Community',
@@ -608,7 +874,17 @@ export default function CommunityView({
             image: postData.image || null,
             likes: 0, comments: 0,
             location: loc || null,
-        }, ...prev]);
+        };
+        // Optimistic local update
+        setPosts(prev => [newPostObj, ...prev]);
+        // Push to Firebase
+        createCommunityPost({
+            ...newPostObj,
+            communityId: newPostObj.communityId,
+        }).then(fbId => {
+            // Update the local temp id with the real Firebase id
+            setPosts(prev => prev.map(p => p.id === localId ? { ...p, id: fbId } : p));
+        }).catch(err => console.warn('Firebase createPost failed:', err));
     }, [communities, joinedIds, joinedCommunities]);
 
     const handleCreatePost = async () => {
@@ -918,7 +1194,7 @@ Respond ONLY with JSON: {"is_legitimate": boolean, "category_id": "string", "sev
                                 {/* ── Communities Near You (2km radar) ──────────── */}
                                 {nearbyCommunities.length > 0 && (
                                     <div className="comm-section">
-                                        <h3 className="comm-section-title">Communities Near You</h3>
+                                        <h3 className="comm-section-title">Communities your in</h3>
                                         <div className="discover-grid">
                                             {nearbyCommunities.map(c => (
                                                 <DiscoverCard key={c.id} community={c} onSelect={setOpenCommunity} />

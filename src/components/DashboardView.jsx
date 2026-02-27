@@ -19,6 +19,7 @@ export default function DashboardView({
     mapEngine,
     darkMode,
     onViewOnMap,
+    user
 }) {
     // Normalise community incidents (pinned to map) into the same shape as
     // regular reports so MapView can render their circle zones.
@@ -64,6 +65,7 @@ export default function DashboardView({
                 communityPosts={communityPosts}
                 onReportClick={handleReportClick}
                 onViewOnMap={onViewOnMap}
+                user={user}
             />
             <MapView
                 isLoaded={isLoaded}

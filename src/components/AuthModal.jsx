@@ -5,6 +5,7 @@ import {
     signUpUser,
     signInWithGoogle,
     setUserProfile,
+    setUserSettings,
     addNotification
 } from '../firebase/services';
 
@@ -36,6 +37,15 @@ export default function AuthModal({ onClose, onLogin, forceMode = false }) {
                 reputation_score: 100,
             };
             await setUserProfile(user.uid, profile);
+            await setUserSettings(user.uid, {
+                dark_mode: true,
+                map_style: "default",
+                notif_toggle: true
+            });
+            await addNotification(user.uid, {
+                message: "Welcome to UrbanSafe AI! Your account was successfully linked.",
+                type: "success"
+            });
             onLogin({ ...profile, uid: user.uid });
             onClose();
         } catch (err) {
@@ -101,6 +111,15 @@ export default function AuthModal({ onClose, onLogin, forceMode = false }) {
                 created_at: new Date()
             };
             await setUserProfile(user.uid, profile);
+            await setUserSettings(user.uid, {
+                dark_mode: true,
+                map_style: "default",
+                notif_toggle: true
+            });
+            await addNotification(user.uid, {
+                message: "Welcome to UrbanSafe AI! Your account was successfully created.",
+                type: "success"
+            });
 
             setSuccess('Account created! You can now log in.');
             setTimeout(() => { setSuccess(''); setMode('login'); }, 1500);

@@ -158,7 +158,20 @@ export const getReports = async () => {
     const reportsRef = collection(db, "reports");
     const q = query(reportsRef, orderBy("timestamp", "desc"));
     const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    return querySnapshot.docs.map(doc => {
+        const data = doc.data();
+        const loc = data.location
+            ? { lat: data.location.latitude, lng: data.location.longitude }
+            : null;
+        return {
+            id: doc.id,
+            ...data,
+            location: loc,
+            // Always treat reports loaded from DB as fully classified —
+            // isClassifying is only meaningful for the current session.
+            isClassifying: false
+        };
+    });
 };
 
 /**
@@ -167,6 +180,14 @@ export const getReports = async () => {
 export const deleteReport = async (reportId) => {
     const reportRef = doc(db, "reports", reportId);
     await deleteDoc(reportRef);
+};
+
+/**
+ * Updates fields on an existing report in Firestore.
+ */
+export const updateReport = async (reportId, fields) => {
+    const reportRef = doc(db, "reports", reportId);
+    await updateDoc(reportRef, { ...fields, updated_at: serverTimestamp() });
 };
 
 // ─────────────────────────────────────────────────────

@@ -49,7 +49,7 @@ Make sure you have the following installed:
 
 ```bash
 git clone https://github.com/Tyiktze/urban_safe_ai.git
-cd urban_safe_ai
+cd ./urban_safe_ai
 ```
 
 2. Install dependencies:

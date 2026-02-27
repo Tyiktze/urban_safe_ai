@@ -20,6 +20,7 @@ import {
   getUserJoinedCommunities,
   db,
   createReport,
+  updateReport,
   deleteReport,
   getNotifications,
   markNotificationRead,
@@ -170,11 +171,12 @@ function App() {
     }
   }, [appSettings, user?.uid]);
 
-  // Sync community posts when joinedIds change
+  // Sync community posts when joinedIds change (use primitive dep to avoid new-array infinite loop)
   React.useEffect(() => {
     const filtered = INITIAL_POSTS.filter(p => joinedIds.includes(p.communityId));
     setCommunityPosts(filtered);
-  }, [joinedIds]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [joinedIds.join(',')]);
 
   const handleLogout = async () => {
     try {
@@ -539,6 +541,18 @@ function App() {
               } : r
             ));
 
+            // Persist classification result back to Firestore
+            if (typeof reportId === 'string') {
+              updateReport(reportId, {
+                category: data.is_legitimate ? data.category_id : 'REJECTED (JOKE)',
+                severity: data.severity,
+                radius: data.impact_radius,
+                isFake: !data.is_legitimate,
+                status: data.is_legitimate ? (data.severity === 'high' ? 'red' : 'orange') : 'red',
+                isClassifying: false
+              }).catch(err => console.warn('Failed to persist edit classification:', err));
+            }
+
             if (!data.is_legitimate) {
               setNotifications(prev => [{
                 id: Date.now(),
@@ -604,12 +618,16 @@ function App() {
     // Add immediately (optimistic update)
     setReportList(prev => [newReport, ...prev]);
 
-    // Persist to Firestore if user is logged in
+    // Persist to Firestore if user is logged in.
+    // Use a shared mutable ref so the classification closure below
+    // can write back to Firestore once it has the real Firestore ID.
+    const firestoreRef = { id: null };
     if (user?.uid) {
       createReport({
         ...newReport,
         user_id: user.uid
       }).then(firestoreId => {
+        firestoreRef.id = firestoreId;
         setReportList(prev => prev.map(r => r.id === reportId ? { ...r, id: firestoreId } : r));
       }).catch(err => console.error("Failed to persist report:", err));
     }
@@ -706,7 +724,13 @@ function App() {
             finalCategory = data.category_id;
           }
         } catch (err) {
-          console.error("AI Validation/Classification failed:", err);
+          console.error("AI Classification failed:", err?.message || err);
+          // Don't leave the report stuck at 'Analysing...' — apply a fallback
+          setReportList(prev => prev.map(r =>
+            r.id === reportId
+              ? { ...r, category: 'infrastructure', severity: 'medium', isClassifying: false }
+              : r
+          ));
         }
       }
 
@@ -745,6 +769,29 @@ function App() {
             }
             : r
         ));
+
+        // Persist classification result back to Firestore using the real Firestore ID.
+        // Poll briefly since createReport may still be resolving when classification finishes.
+        const persistClassification = async () => {
+          let fsId = firestoreRef.id;
+          if (!fsId) {
+            // Wait up to 5s for createReport to resolve
+            for (let i = 0; i < 10 && !firestoreRef.id; i++) {
+              await new Promise(r => setTimeout(r, 500));
+            }
+            fsId = firestoreRef.id;
+          }
+          if (fsId) {
+            updateReport(fsId, {
+              category: finalCategory,
+              severity,
+              radius: impact_radius,
+              isClassifying: false,
+              status: severity === 'high' ? 'red' : 'orange'
+            }).catch(err => console.warn('Failed to persist classification:', err));
+          }
+        };
+        persistClassification();
 
         // Push notification
         setNotifications(prev => [{
@@ -857,6 +904,7 @@ function App() {
                 setMapCenter(loc);
                 if (map) { map.panTo(loc); map.setZoom(16); }
               }}
+              user={user}
             />
           )}
 
@@ -880,6 +928,7 @@ function App() {
               map={map}
               mapEngine={appSettings.mapEngine}
               darkMode={appSettings.darkMode}
+              user={user}
             />
           )}
 

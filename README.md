@@ -271,3 +271,126 @@ Distributed under the *MIT License*. See the **LICENSE** file for more details.
 ## ❓ Questions / Feedback
 
 Have ideas or suggestions? Open an issue or start a discussion!
+
+## Firebase Setup
+
+### Steps for firebase keys:
+
+1. Go to [https://console.firebase.google.com](https://console.firebase.google.com)
+2. Create or select a project.
+3. Click **Project Settings** (⚙️ icon).
+4. Under **Your Apps**, register a Web App.
+5. Firebase will generate a config object containing:
+
+   * `apiKey`
+   * `authDomain`
+   * `projectId`
+   * `storageBucket`
+   * `messagingSenderId`
+   * `appId`
+   * `measurementId`
+
+Copy those values into your `.env`.
+
+### Steps for firebase aunthentication:
+
+1. Go to Firebase Console https://console.firebase.google.com
+2. Click Add Project
+3. Enter project name
+4. Disable Google Analytics (optional)
+5. Click Create Project
+
+### database explain:
+
+1. users
+    * avatar
+    * created_at
+    * email
+    * joined_communities
+    * reputation_score
+    * role
+    * updated_at
+    * username
+    
+2. reports
+    * areaName
+    * audienceIds
+    * category
+    * createdAt
+    * description
+    * images
+    * isClassifying
+    * isFake
+    * isPublic
+    * isSolved
+    * isUserMade
+    * location
+    * locationName
+    * radius
+    * severity
+    * status
+    * timestamp
+    * title
+    * updated_at
+    * user_id
+
+3. notifications
+    * created_at
+    * is_read
+    * message
+    * type
+    * user_id
+
+4. settings
+    * dark_mode
+    * map_style
+    * notif_toggle
+    * user_id
+
+5. communities
+    * color
+    * created_at
+    * description
+    * isPrivate
+    * location
+    * memberCount
+    * name
+    * ownerId
+    * tag
+
+6. post_reports
+    * post_id
+    * reporter_id
+    * timestamp
+    
+7. community_posts
+    * author
+    * avatar
+    * category
+    * comments
+    * communityColor
+    * communityId
+    * communityName
+    * content
+    * dislikedBy
+    * image
+    * likedBy
+       * 0
+       * 1
+    * likes
+    * location
+    * severity
+    * timestamp
+    * type
+
+8. comments
+    * author
+    * report_id
+    * text
+    * timestamp
+    * user_id
+
+9. comment_reports
+    * comment_id
+    * reporter_id
+    * timestamp

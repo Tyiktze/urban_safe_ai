@@ -393,4 +393,4 @@ Copy those values into your `.env`.
 9. comment_reports
     * comment_id
     * reporter_id
-    * timestamp put this in readme
+    * timestamp

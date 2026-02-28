@@ -65,6 +65,7 @@ export default function DashboardView({
                 communityPosts={communityPosts}
                 onReportClick={handleReportClick}
                 onViewOnMap={onViewOnMap}
+                userLocation={userLocation}
                 user={user}
             />
             <MapView

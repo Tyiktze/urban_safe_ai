@@ -477,8 +477,10 @@ export default function MapView({
                                                     marginTop: 6, fontSize: 10, fontWeight: 'bold',
                                                     textTransform: 'uppercase', letterSpacing: '0.04em',
                                                     color: severityColor(r.severity),
+                                                    display: 'flex', alignItems: 'center', gap: 8
                                                 }}>
-                                                    {r.severity} severity
+                                                    <span>{r.severity} severity</span>
+                                                    {r.isSolved && <span style={{ color: '#0EA5E9' }}>✓ SOLVED</span>}
                                                 </div>
                                             </div>
                                         ))}

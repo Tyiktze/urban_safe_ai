@@ -8,7 +8,7 @@ import ReportModal from './components/ReportModal';
 import AuthModal from './components/AuthModal';
 import DashboardView from './components/DashboardView';
 import HistoryView from './components/HistoryView';
-import CommunityView, { INITIAL_POSTS } from './components/CommunityView';
+import CommunityView from './components/CommunityView';
 import SettingsView from './components/SettingsView';
 import {
   onAuthChange,
@@ -24,7 +24,9 @@ import {
   deleteReport,
   getNotifications,
   markNotificationRead,
-  deleteNotification
+  deleteNotification,
+  addNotification,
+  getPostsForCommunities
 } from './firebase/services';
 import { doc, getDoc } from 'firebase/firestore';
 
@@ -56,22 +58,45 @@ function App() {
   const [selectedAddress, setSelectedAddress] = useState('');
   const [selectedArea, setSelectedArea] = useState('');
   const [selectedReportId, setSelectedReportId] = useState(null);
-  const [userLocation, setUserLocation] = useState({ lat: 6.1248, lng: 100.3673 }); // Default: Alor Setar, Kedah
-  const [mapCenter, setMapCenter] = useState({ lat: 6.1248, lng: 100.3673 });
-  const [notifications, setNotifications] = useState([
-    { id: 1, text: "Systems online and active.", time: "Just now", unread: true },
-    { id: 2, text: "UrbanSafe AI ready for classification.", time: "5m ago", unread: false }
-  ]);
+  const [userLocation, setUserLocation] = useState({ lat: 3.1319, lng: 101.6841 }); // Default: Alor Setar, Kedah
+  const [mapCenter, setMapCenter] = useState({ lat: 3.1319, lng: 101.6841 });
+  const [notifications, setNotifications] = useState([]);
+
+
   const [imagePreview, setImagePreview] = useState(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [editingReportId, setEditingReportId] = useState(null);
-  const [lastReportTime, setLastReportTime] = useState(0);
-  const [cooldownRemaining, setCooldownRemaining] = useState(0);
-  const [lastEditTime, setLastEditTime] = useState(0);
-  const [editCooldownRemaining, setEditCooldownRemaining] = useState(0);
+  // Persist cooldown timestamps across refreshes using localStorage
+  const [lastReportTime, setLastReportTimeRaw] = useState(() => {
+    const stored = parseInt(localStorage.getItem('urbansafe_last_report_time') || '0', 10);
+    return stored;
+  });
+  const [cooldownRemaining, setCooldownRemaining] = useState(() => {
+    const stored = parseInt(localStorage.getItem('urbansafe_last_report_time') || '0', 10);
+    const elapsed = Math.floor((Date.now() - stored) / 1000);
+    return Math.max(0, 30 - elapsed);
+  });
+  const [lastEditTime, setLastEditTimeRaw] = useState(() => {
+    const stored = parseInt(localStorage.getItem('urbansafe_last_edit_time') || '0', 10);
+    return stored;
+  });
+  const [editCooldownRemaining, setEditCooldownRemaining] = useState(() => {
+    const stored = parseInt(localStorage.getItem('urbansafe_last_edit_time') || '0', 10);
+    const elapsed = Math.floor((Date.now() - stored) / 1000);
+    return Math.max(0, 15 - elapsed);
+  });
+
+  // Helper setters that persist to localStorage
+  const setLastReportTime = (ts) => {
+    localStorage.setItem('urbansafe_last_report_time', String(ts));
+    setLastReportTimeRaw(ts);
+  };
+  const setLastEditTime = (ts) => {
+    localStorage.setItem('urbansafe_last_edit_time', String(ts));
+    setLastEditTimeRaw(ts);
+  };
   const [communityPostModal, setCommunityPostModal] = useState({ open: false, audience: 'community' });
-  // Seed communityPosts from INITIAL_POSTS filtered to default-joined communities (ids 1 & 4)
-  // so Recent Reports is populated immediately on page load, even before visiting the community tab.
+  // Fetch communityposts dynamically based on joinedIds.
   const [communityPosts, setCommunityPosts] = React.useState([]);
   const [joinedIds, setJoinedIds] = React.useState([1, 4]); // Default IDs if not logged in
 
@@ -84,6 +109,21 @@ function App() {
     darkMode: true,
     mapEngine: 'google' // 'google' (auto dark/light) | 'satellite'
   });
+
+  const addAppNotification = React.useCallback(async (text, type = 'info') => {
+    const tempId = `temp-${Date.now()}`;
+    const newNotif = { id: tempId, text, time: "Just now", unread: true, type };
+    setNotifications(prev => [newNotif, ...prev]);
+
+    if (user?.uid) {
+      try {
+        const firestoreId = await addNotification(user.uid, { message: text, type });
+        setNotifications(prev => prev.map(n => n.id === tempId ? { ...n, id: firestoreId } : n));
+      } catch (err) {
+        console.error("Failed to persist notification:", err);
+      }
+    }
+  }, [user?.uid]);
 
   // Apply dark mode theme
   React.useEffect(() => {
@@ -171,20 +211,21 @@ function App() {
     }
   }, [appSettings, user?.uid]);
 
-  // Sync community posts when joinedIds change (use primitive dep to avoid new-array infinite loop)
+  // Sync community posts when joinedIds change
   React.useEffect(() => {
-    const filtered = INITIAL_POSTS.filter(p => joinedIds.includes(p.communityId));
-    setCommunityPosts(filtered);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (joinedIds && joinedIds.length > 0) {
+      getPostsForCommunities(joinedIds)
+        .then(setCommunityPosts)
+        .catch(console.warn);
+    } else {
+      setCommunityPosts([]);
+    }
   }, [joinedIds.join(',')]);
 
   const handleLogout = async () => {
     try {
       await signOutUser();
-      setNotifications(prev => [
-        { id: Date.now(), text: "Successfully logged out.", time: "Just now", unread: true },
-        ...prev
-      ]);
+      addAppNotification("Successfully logged out.", "info");
     } catch (err) {
       console.error("Logout failed:", err);
     }
@@ -394,13 +435,15 @@ function App() {
 
   const handleSolveReport = React.useCallback((id) => {
     setReportList(prev => prev.map(r =>
-      r.id === id ? { ...r, status: 'green', isSolved: true } : r
+      r.id === id ? { ...r, status: 'blue', isSolved: true } : r
     ));
-    setNotifications(prev => [
-      { id: Date.now(), text: "Incident marked as solved. Good job!", time: "Just now", unread: true },
-      ...prev
-    ]);
-  }, []);
+    // Persist solved status to Firestore
+    if (user?.uid) {
+      updateReport(id, { status: 'blue', isSolved: true })
+        .catch(err => console.error('Failed to persist solved status:', err));
+    }
+    addAppNotification("Incident marked as solved. Good job!", "success");
+  }, [user?.uid, addAppNotification]);
 
   const handleEditReport = React.useCallback((report) => {
     setEditingReportId(report.id);
@@ -436,10 +479,7 @@ function App() {
       const timeSinceLast = (now - lastReportTime) / 1000;
       if (timeSinceLast < 30) {
         const remaining = Math.ceil(30 - timeSinceLast);
-        setNotifications(prev => [
-          { id: Date.now(), text: `Slow down! Please wait ${remaining} seconds before reporting again.`, time: "Just now", unread: true },
-          ...prev
-        ]);
+        addAppNotification(`Slow down! Please wait ${remaining} seconds before reporting again.`, "warning");
         setCooldownRemaining(remaining);
         return;
       }
@@ -450,10 +490,7 @@ function App() {
       const timeSinceLastEdit = (now - lastEditTime) / 1000;
       if (timeSinceLastEdit < 15) {
         const remaining = Math.ceil(15 - timeSinceLastEdit);
-        setNotifications(prev => [
-          { id: Date.now(), text: `Please wait ${remaining} seconds before editing again.`, time: "Just now", unread: true },
-          ...prev
-        ]);
+        addAppNotification(`Please wait ${remaining} seconds before editing again.`, "warning");
         setEditCooldownRemaining(remaining);
         return;
       }
@@ -554,12 +591,7 @@ function App() {
             }
 
             if (!data.is_legitimate) {
-              setNotifications(prev => [{
-                id: Date.now(),
-                text: "Your report edit was rejected by UrbanSafe AI (detected as nonsense/joke).",
-                time: "Just now",
-                unread: true
-              }, ...prev]);
+              addAppNotification("Your report edit was rejected by UrbanSafe AI (detected as nonsense/joke).", "error");
             }
           } catch (e) {
             setReportList(prev => prev.map(r => r.id === reportId ? { ...r, isClassifying: false } : r));
@@ -583,6 +615,7 @@ function App() {
       category: 'Analyzing...',
       isClassifying: true,
       isUserMade: true,
+      timestamp: reportId,   // local timestamp (ms) for timeAgo() until Firestore resolves
       // Audience — keep for reference; public reports show on map automatically
       audienceIds: formData.audienceIds || [],
       isPublic: formData.isPublic !== false,
@@ -645,6 +678,10 @@ function App() {
 
     // Classification in background
     (async () => {
+      // Helper: match by EITHER the local temp ID or the Firestore ID (whichever the report
+      // has been renamed to by the time this runs — they race each other).
+      const matchId = (r) => r.id === reportId || (firestoreRef.id && r.id === firestoreRef.id);
+
       let finalCategory = 'hazard';
       let isLegitimate = true;
       let severity = 'medium';
@@ -658,7 +695,7 @@ function App() {
         const mode = debugMatch[2];
         severity = mode === '1' ? 'low' : mode === '2' ? 'medium' : 'high';
         impact_radius = parseInt(debugMatch[3]) || 200;
-        finalCategory = 'community';
+        finalCategory = 'DEBUG';
         isLegitimate = true;
       } else if (newReport.title.startsWith('[DEBUG]')) {
         // Legacy Manual Debug Parsing (from description lines)
@@ -715,6 +752,7 @@ function App() {
 
           const result = await model.generateContent(prompt);
           const data = JSON.parse(result.response.text());
+          console.log("RAW AI RESPONSE:", result.response.text());
 
           isLegitimate = data.is_legitimate;
           severity = data.severity || 'medium';
@@ -725,40 +763,55 @@ function App() {
           }
         } catch (err) {
           console.error("AI Classification failed:", err?.message || err);
-          // Don't leave the report stuck at 'Analysing...' — apply a fallback
+          // Don't leave the report stuck at 'Analysing...' — apply a fallback classification
           setReportList(prev => prev.map(r =>
-            r.id === reportId
-              ? { ...r, category: 'infrastructure', severity: 'medium', isClassifying: false }
+            matchId(r)
+              ? { ...r, category: 'infrastructure', severity: 'medium', radius: 200, isClassifying: false }
               : r
           ));
+          // Notify the user something went wrong
+          addAppNotification(`AI classification failed for "${newReport.title}". Report saved with default category.`, 'warning');
+          return; // Exit early — don't run the post-processing below
         }
       }
 
       if (!isLegitimate) {
-        // Mark as rejected
+        // Mark as rejected visually
         setReportList(prev => prev.map(r =>
-          r.id === reportId
+          matchId(r)
             ? { ...r, category: 'REJECTED (JOKE)', isClassifying: false, status: 'red', isFake: true }
             : r
         ));
 
         // Push notification
-        setNotifications(prev => [{
-          id: Date.now(),
-          text: `Report Rejected: "${newReport.title}" was flagged as illegitimate.`,
-          time: "Just now",
-          unread: true,
-          type: 'error'
-        }, ...prev]);
+        addAppNotification(`Report Rejected: "${newReport.title}" was flagged as illegitimate.`, 'error');
 
-        // Remove after 3 seconds
-        setTimeout(() => {
-          setReportList(prev => prev.filter(r => r.id !== reportId));
+        // Delete from Firestore AND remove from local state after 3 seconds.
+        // We must wait for createReport to resolve so we have the real Firestore ID.
+        setTimeout(async () => {
+          // Capture the real Firestore ID — poll up to 5s if createReport hasn't resolved yet
+          let fsId = firestoreRef.id;
+          if (!fsId) {
+            for (let i = 0; i < 10 && !firestoreRef.id; i++) {
+              await new Promise(res => setTimeout(res, 500));
+            }
+            fsId = firestoreRef.id;
+          }
+
+          // Delete from Firestore so it won't reappear on refresh
+          if (fsId) {
+            deleteReport(fsId).catch(err =>
+              console.warn('Failed to delete rejected report from Firestore:', err)
+            );
+          }
+
+          // Remove from local state using both possible IDs
+          setReportList(prev => prev.filter(r => r.id !== fsId && r.id !== reportId));
         }, 3000);
       } else {
         // Update the specific report in the list
         setReportList(prev => prev.map(r =>
-          r.id === reportId
+          matchId(r)
             ? {
               ...r,
               category: finalCategory,
@@ -794,13 +847,7 @@ function App() {
         persistClassification();
 
         // Push notification
-        setNotifications(prev => [{
-          id: Date.now(),
-          text: `Report Success: "${newReport.title}" verified and classified.`,
-          time: "Just now",
-          unread: true,
-          type: 'success'
-        }, ...prev]);
+        addAppNotification(`Report Success: "${newReport.title}" verified and classified.`, 'success');
       }
     })();
   };
@@ -855,7 +902,7 @@ function App() {
           darkMode={appSettings.darkMode}
         />
 
-        {/* Temporary Seed Button */}
+        {/* Temporary Seed Button (Kept for now)
         <div style={{ padding: '10px 20px', display: 'flex', gap: '10px' }}>
           <button
             onClick={async () => {
@@ -881,6 +928,8 @@ function App() {
             🚀 Seed Firebase Data
           </button>
         </div>
+
+        */}
 
         <div className="content-body">
           {activeTab === 'grid' && (

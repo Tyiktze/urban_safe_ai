@@ -7,8 +7,8 @@ export default function Sidebar({ onToggle, isOpen, activeTab, onTabChange, user
 
     const tabs = [
         { id: 'grid', icon: LayoutGrid, label: 'Dashboard' },
-        { id: 'history', icon: Clock, label: 'History' },
         { id: 'users', icon: Users, label: 'Community' },
+        { id: 'history', icon: Clock, label: 'History' },
     ];
 
     // Close menu when clicking outside
@@ -80,14 +80,15 @@ export default function Sidebar({ onToggle, isOpen, activeTab, onTabChange, user
 
                     {/* Profile picture with dropdown */}
                     <div ref={menuRef} style={{ position: 'relative' }}>
-                        <img
-                            src={user ? avatarSrc : 'https://api.dicebear.com/7.x/avataaars/svg?seed=guest'}
-                            alt="Profile"
-                            className="profile-img"
-                            style={{ cursor: 'pointer', opacity: user ? 1 : 0.5, transition: 'opacity 0.2s, transform 0.2s', transform: showProfileMenu ? 'scale(1.1)' : 'scale(1)' }}
-                            onClick={() => setShowProfileMenu(p => !p)}
-                            title={user ? user.username : 'Log in'}
-                        />
+                        <div style={{ position: 'relative', display: 'inline-block', cursor: 'pointer' }} onClick={() => setShowProfileMenu(p => !p)}>
+                            <img
+                                src={user ? avatarSrc : 'https://api.dicebear.com/7.x/avataaars/svg?seed=guest'}
+                                alt="Profile"
+                                className="profile-img"
+                                style={{ opacity: user ? 1 : 0.5, transition: 'opacity 0.2s, transform 0.2s', transform: showProfileMenu ? 'scale(1.1)' : 'scale(1)' }}
+                                title={user ? user.username : 'Log in'}
+                            />
+                        </div>
 
                         {showProfileMenu && (
                             <div style={{
@@ -107,49 +108,6 @@ export default function Sidebar({ onToggle, isOpen, activeTab, onTabChange, user
                                                     ID: {user.uid}
                                                 </div>
                                             )}
-                                        </div>
-
-                                        {/* Communities section */}
-                                        <div style={{ padding: '6px 12px 8px', borderBottom: '1px solid var(--glass-border)', marginBottom: 6 }}>
-                                            <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.8px', color: 'var(--text-tertiary)', marginBottom: 7 }}>
-                                                My Communities
-                                            </div>
-                                            {myCommunities.length > 0 ? (
-                                                <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-                                                    {myCommunities.slice(0, 5).map(c => (
-                                                        <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                                            <div style={{
-                                                                width: 8, height: 8, borderRadius: '50%',
-                                                                background: c.color || 'var(--accent-orange)',
-                                                                flexShrink: 0,
-                                                                boxShadow: `0 0 5px ${c.color || 'var(--accent-orange)'}88`
-                                                            }} />
-                                                            <span style={{ fontSize: 12, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                                                {c.name}
-                                                            </span>
-                                                            {c.isPrivate && (
-                                                                <span style={{ fontSize: 9, color: 'var(--text-secondary)', background: 'rgba(255,255,255,0.07)', borderRadius: 4, padding: '1px 5px', flexShrink: 0 }}>Private</span>
-                                                            )}
-                                                        </div>
-                                                    ))}
-                                                    {myCommunities.length > 5 && (
-                                                        <div style={{ fontSize: 11, color: 'var(--text-secondary)', paddingLeft: 16 }}>
-                                                            +{myCommunities.length - 5} more…
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            ) : (
-                                                <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic' }}>
-                                                    <Users size={13} style={{ opacity: 0.5 }} />
-                                                    Not in any community yet
-                                                </div>
-                                            )}
-                                            <button
-                                                onClick={() => { setShowProfileMenu(false); onTabChange('users'); }}
-                                                style={{ all: 'unset', cursor: 'pointer', marginTop: 8, fontSize: 11, color: 'var(--accent-orange)', display: 'flex', alignItems: 'center', gap: 4 }}
-                                            >
-                                                <ChevronRight size={11} /> Browse communities
-                                            </button>
                                         </div>
 
                                         <button onClick={() => { setShowProfileMenu(false); onTabChange('settings'); }}
@@ -177,7 +135,7 @@ export default function Sidebar({ onToggle, isOpen, activeTab, onTabChange, user
                         )}
                     </div>
                 </div>
-            </aside>
+            </aside >
         </>
     );
 }

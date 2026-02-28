@@ -11,7 +11,10 @@ import {
     where,
     orderBy,
     serverTimestamp,
-    GeoPoint
+    GeoPoint,
+    arrayUnion,
+    arrayRemove,
+    increment
 } from "firebase/firestore";
 import {
     createUserWithEmailAndPassword,
@@ -92,13 +95,14 @@ export const setUserProfile = async (userId, userData) => {
  */
 export const addNotification = async (userId, notificationData) => {
     const notificationsRef = collection(db, "notifications");
-    await addDoc(notificationsRef, {
+    const newDoc = await addDoc(notificationsRef, {
         user_id: userId,
         message: notificationData.message,
         type: notificationData.type || "info",
         is_read: false,
         created_at: serverTimestamp()
     });
+    return newDoc.id;
 };
 
 /**
@@ -121,19 +125,35 @@ export const setUserSettings = async (userId, settingsData) => {
  */
 export const createReport = async (reportData) => {
     const reportsRef = collection(db, "reports");
-    // Assuming reportData.location is { lat, lng }
-    const location = new GeoPoint(reportData.location.lat, reportData.location.lng);
+    // Convert { lat, lng } to a Firestore GeoPoint
+    const location = reportData.location
+        ? new GeoPoint(reportData.location.lat, reportData.location.lng)
+        : null;
 
     const docRef = await addDoc(reportsRef, {
-        title: reportData.title,
-        description: reportData.description,
-        category: reportData.category,
+        title: reportData.title || 'New Incident',
+        description: reportData.description || '',
+        category: reportData.category || 'Analyzing...',
         location: location,
-        status: reportData.status || "pending",
-        timestamp: serverTimestamp(),
+        // Human-readable location strings
+        locationName: reportData.locationName || 'Location Unknown',
+        areaName: reportData.areaName || 'Unknown Area',
+        status: reportData.status || 'orange',
+        // AI classification fields
+        severity: reportData.severity || 'medium',
+        radius: reportData.radius || 200,
+        isFake: reportData.isFake || false,
+        isSolved: reportData.isSolved || false,
+        isClassifying: reportData.isClassifying ?? true,
+        isUserMade: reportData.isUserMade ?? true,
+        // Audience / sharing
+        audienceIds: reportData.audienceIds || [],
+        isPublic: reportData.isPublic !== false,
+        // Ownership & time
         user_id: reportData.user_id,
-        // image field left optional per user request
-        image: reportData.image || null
+        image: reportData.image || null,
+        timestamp: serverTimestamp(),
+        created_at: serverTimestamp(),
     });
     return docRef.id;
 };
@@ -141,14 +161,27 @@ export const createReport = async (reportData) => {
 /**
  * Adds a comment to a report.
  */
-export const addComment = async (reportId, userId, text) => {
+export const addComment = async (reportId, userId, text, authorName) => {
     const commentsRef = collection(db, "comments");
     await addDoc(commentsRef, {
         report_id: reportId,
         user_id: userId,
+        author: authorName || "Anonymous",
         text: text,
         timestamp: serverTimestamp()
     });
+
+    try {
+        const postRef = doc(db, "community_posts", reportId);
+        await updateDoc(postRef, { comments: increment(1) });
+    } catch (e) {
+        try {
+            const rRef = doc(db, "reports", reportId);
+            await updateDoc(rRef, { comments: increment(1) });
+        } catch (e2) {
+            // Ignore if doc doesn't exist
+        }
+    }
 };
 
 /**
@@ -167,9 +200,11 @@ export const getReports = async () => {
             id: doc.id,
             ...data,
             location: loc,
-            // Always treat reports loaded from DB as fully classified —
-            // isClassifying is only meaningful for the current session.
-            isClassifying: false
+            // Convert Firestore Timestamps to JS milliseconds so timeAgo() and sorting work
+            timestamp: data.timestamp?.toMillis ? data.timestamp.toMillis() : Date.now(),
+            created_at: data.created_at?.toMillis ? data.created_at.toMillis() : undefined,
+            // Always treat reports loaded from DB as not mid-classification
+            isClassifying: false,
         };
     });
 };
@@ -372,12 +407,16 @@ export const deleteNotification = async (notifId) => {
  */
 export const toggleLikePost = async (postId, userId, isLiked) => {
     const postRef = doc(db, "community_posts", postId);
-    const postSnap = await getDoc(postRef);
-    if (!postSnap.exists()) return;
-    const currentLikes = postSnap.data().likes || 0;
-    await updateDoc(postRef, {
-        likes: Math.max(0, currentLikes + (isLiked ? 1 : -1))
-    });
+    if (isLiked) {
+        await updateDoc(postRef, {
+            likedBy: arrayUnion(userId),
+            dislikedBy: arrayRemove(userId)
+        });
+    } else {
+        await updateDoc(postRef, {
+            likedBy: arrayRemove(userId)
+        });
+    }
 };
 
 /**
@@ -385,12 +424,16 @@ export const toggleLikePost = async (postId, userId, isLiked) => {
  */
 export const toggleDislikePost = async (postId, userId, isDisliked) => {
     const postRef = doc(db, "community_posts", postId);
-    const postSnap = await getDoc(postRef);
-    if (!postSnap.exists()) return;
-    const currentDislikes = postSnap.data().dislikes || 0;
-    await updateDoc(postRef, {
-        dislikes: Math.max(0, currentDislikes + (isDisliked ? 1 : -1))
-    });
+    if (isDisliked) {
+        await updateDoc(postRef, {
+            dislikedBy: arrayUnion(userId),
+            likedBy: arrayRemove(userId)
+        });
+    } else {
+        await updateDoc(postRef, {
+            dislikedBy: arrayRemove(userId)
+        });
+    }
 };
 
 /**
@@ -402,6 +445,12 @@ export const reportPost = async (postId, userId) => {
         post_id: postId,
         reporter_id: userId,
         timestamp: serverTimestamp()
+    });
+
+    // Also save it locally on the post to persist UI state
+    const postRef = doc(db, "community_posts", postId);
+    await updateDoc(postRef, {
+        reportedBy: arrayUnion(userId)
     });
 };
 
@@ -428,17 +477,15 @@ export const getComments = async (postId) => {
  */
 export const toggleLikeComment = async (commentId, userId, isLiked) => {
     const commentRef = doc(db, "comments", commentId);
-    const snap = await getDoc(commentRef);
-    if (!snap.exists()) return;
-    const current = snap.data().likes || 0;
-    // Track per-user like in a subcollection to prevent double-liking
-    const likeRef = doc(db, "comments", commentId, "likes", userId);
     if (isLiked) {
-        await setDoc(likeRef, { liked_at: serverTimestamp() });
-        await updateDoc(commentRef, { likes: current + 1 });
+        await updateDoc(commentRef, {
+            likedBy: arrayUnion(userId),
+            dislikedBy: arrayRemove(userId)
+        });
     } else {
-        await deleteDoc(likeRef);
-        await updateDoc(commentRef, { likes: Math.max(0, current - 1) });
+        await updateDoc(commentRef, {
+            likedBy: arrayRemove(userId)
+        });
     }
 };
 
@@ -447,12 +494,16 @@ export const toggleLikeComment = async (commentId, userId, isLiked) => {
  */
 export const toggleDislikeComment = async (commentId, userId, isDisliked) => {
     const commentRef = doc(db, "comments", commentId);
-    const snap = await getDoc(commentRef);
-    if (!snap.exists()) return;
-    const current = snap.data().dislikes || 0;
-    await updateDoc(commentRef, {
-        dislikes: Math.max(0, current + (isDisliked ? 1 : -1))
-    });
+    if (isDisliked) {
+        await updateDoc(commentRef, {
+            dislikedBy: arrayUnion(userId),
+            likedBy: arrayRemove(userId)
+        });
+    } else {
+        await updateDoc(commentRef, {
+            dislikedBy: arrayRemove(userId)
+        });
+    }
 };
 
 /**
@@ -464,5 +515,11 @@ export const reportComment = async (commentId, userId) => {
         comment_id: commentId,
         reporter_id: userId,
         timestamp: serverTimestamp()
+    });
+
+    // Also save it locally on the comment to persist UI state
+    const commentRef = doc(db, "comments", commentId);
+    await updateDoc(commentRef, {
+        reportedBy: arrayUnion(userId)
     });
 };

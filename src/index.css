@@ -741,6 +741,11 @@ body {
   box-shadow: 0 0 12px rgba(81, 222, 161, 0.8), 0 0 20px rgba(81, 222, 161, 0.4);
 }
 
+.status-blue {
+  background: #38BDF8;
+  box-shadow: 0 0 12px rgba(56, 189, 248, 0.8), 0 0 20px rgba(56, 189, 248, 0.4);
+}
+
 .report-card:hover .status-dot {
   transform: scale(1.2);
   filter: brightness(1.2);
@@ -2903,8 +2908,10 @@ body {
     display: none;
   }
 }
+
 /* Post and Report Interactions */
-.post-actions, .report-card-actions {
+.post-actions,
+.report-card-actions {
   display: flex;
   gap: 12px;
   margin-top: 12px;
@@ -2951,13 +2958,15 @@ body {
   background: rgba(238, 66, 102, 0.1);
 }
 
-.report-card.reported, .post-card.reported {
+.report-card.reported,
+.post-card.reported {
   opacity: 0.6;
   filter: grayscale(0.5);
   border-color: rgba(238, 66, 102, 0.3);
 }
 
-.report-card.reported::after, .post-card.reported::after {
+.report-card.reported::after,
+.post-card.reported::after {
   content: 'REPORTED';
   position: absolute;
   top: 10px;
@@ -2979,7 +2988,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  background: rgba(255,255,255,0.02);
+  background: rgba(255, 255, 255, 0.02);
 }
 
 .comment-item {
@@ -3032,7 +3041,7 @@ body {
 
 .comment-action-btn:hover {
   color: var(--text-primary);
-  background: rgba(255,255,255,0.06);
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .comment-action-btn.liked {
@@ -3056,7 +3065,7 @@ body {
 
 .comment-input {
   flex: 1;
-  background: rgba(255,255,255,0.05);
+  background: rgba(255, 255, 255, 0.05);
   border: 1px solid var(--glass-border);
   border-radius: 20px;
   padding: 7px 14px;
@@ -3089,7 +3098,7 @@ body {
   color: white;
   flex-shrink: 0;
   transition: all 0.2s ease;
-  box-shadow: 0 2px 8px rgba(255,107,53,0.35);
+  box-shadow: 0 2px 8px rgba(255, 107, 53, 0.35);
 }
 
 .comment-send-btn:hover:not(:disabled) {

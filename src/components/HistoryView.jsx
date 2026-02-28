@@ -32,6 +32,7 @@ export default function HistoryView({
                 onSolve={handleSolveReport}
                 onEdit={handleEditReport}
                 isHistoryView={true}
+                userLocation={userLocation}
                 user={user}
             />
             <div className="history-stats-sidebar glass">

@@ -95,7 +95,7 @@ export default function SettingsView({ appSettings, setAppSettings, user, setUse
 
                 <section style={{ marginBottom: '32px' }}>
                     <h3 style={{ fontSize: '14px', textTransform: 'uppercase', letterSpacing: '2px', color: 'var(--text-secondary)', marginBottom: '16px' }}>Preference</h3>
-                    <SettingItem icon={Bell} title="Push Notifications" description="Receive alerts for high-severity incidents in your area.">
+                    <SettingItem icon={Bell} title="Push Notifications" description="Receive alerts for notifications.">
                         <Toggle value={notifications} onToggle={() => updateSetting('notifications', !notifications)} />
                     </SettingItem>
                     <SettingItem icon={Palette} title="Dark Mode" description="Toggle between light and dark theme aesthetics.">

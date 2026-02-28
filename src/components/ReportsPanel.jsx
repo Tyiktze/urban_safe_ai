@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Cpu, CheckCircle, Trash2, Edit3, AlertTriangle, MapPin, Clock, Zap } from 'lucide-react';
+import { Cpu, CheckCircle, Trash2, Edit3, AlertTriangle, MapPin, Clock, Zap, Globe } from 'lucide-react';
 import { deleteReport } from '../firebase/services';
 
 const THREE_DAYS = 3 * 24 * 3600000;
@@ -19,6 +19,18 @@ function timeAgo(ts) {
     return `${Math.floor(diff / 86400000)}d ago`;
 }
 
+function getDistance(lat1, lon1, lat2, lon2) {
+    if (!lat1 || !lon1 || !lat2 || !lon2) return Infinity;
+    const R = 6371; // km
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+        Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+}
+
 
 
 export default function ReportsPanel({
@@ -30,22 +42,34 @@ export default function ReportsPanel({
     onEdit,
     isHistoryView,
     onViewOnMap,
-    user
+    user,
+    userLocation
 }) {
+    const [sortMode, setSortMode] = useState('time');
+
     const [, setTimeTick] = useState(0);
     useEffect(() => {
         const id = setInterval(() => setTimeTick(t => t + 1), 30000);
         return () => clearInterval(id);
     }, []);
 
-
     // Shared timestamp extractor for both report types (fallback to r.id which is Date.now() for map reports)
     const getTime = r => r.timestamp || (r.createdAt ? new Date(r.createdAt).getTime() : r.id);
 
     const mergedItems = useMemo(() => {
         const allItems = reportList
-            .map(r => ({ ...r, _itemType: 'incident', _source: 'map' }))
-            .sort((a, b) => getTime(b) - getTime(a));
+            .map(r => ({ ...r, _itemType: 'incident', _source: 'map' }));
+
+        if (sortMode === 'closest') {
+            allItems.sort((a, b) => {
+                const distA = a.location ? getDistance(userLocation?.lat, userLocation?.lng, a.location.lat, a.location.lng) : Infinity;
+                const distB = b.location ? getDistance(userLocation?.lat, userLocation?.lng, b.location.lat, b.location.lng) : Infinity;
+                if (distA === Infinity && distB === Infinity) return getTime(b) - getTime(a);
+                return distA - distB;
+            });
+        } else {
+            allItems.sort((a, b) => getTime(b) - getTime(a));
+        }
 
         // Deduplicate incidents that were shared to multiple communities / public map
         const seenMapIncidents = new Map();
@@ -78,7 +102,7 @@ export default function ReportsPanel({
             }
         }
         return finalItems;
-    }, [reportList, communityPosts]);
+    }, [reportList, communityPosts, sortMode, userLocation]);
 
     const availableCommunities = useMemo(() => {
         const comms = new Map();
@@ -101,20 +125,41 @@ export default function ReportsPanel({
 
     return (
         <section className="reports-panel">
-            <div className="panel-header">
-                <h2>{isHistoryView ? 'My Report History' : 'Recent Reports'}</h2>
+            <div className="panel-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <h2 style={{ margin: 0 }}>{isHistoryView ? 'My Report History' : 'Recent Reports'}</h2>
+                <div style={{ display: 'flex', background: 'rgba(255,255,255,0.05)', borderRadius: 8, padding: 4, gap: 4 }}>
+                    <button
+                        onClick={() => setSortMode('time')}
+                        style={{ padding: '6px 12px', background: sortMode === 'time' ? 'rgba(255,255,255,0.1)' : 'transparent', color: sortMode === 'time' ? '#fff' : 'var(--text-secondary)', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 500, transition: 'all 0.2s' }}
+                    >Time</button>
+                    <button
+                        onClick={() => setSortMode('closest')}
+                        style={{ padding: '6px 12px', background: sortMode === 'closest' ? 'rgba(255,255,255,0.1)' : 'transparent', color: sortMode === 'closest' ? '#fff' : 'var(--text-secondary)', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 500, transition: 'all 0.2s' }}
+                    >Closest</button>
+                </div>
             </div>
 
-
             <div className="reports-list">
-                {/* History view: classic report cards — sorted newest first */}
-                {isHistoryView && [...reportList].sort((a, b) => getTime(b) - getTime(a)).map((report, index) => {
+                {/* History view: classic report cards */}
+                {isHistoryView && [...reportList].sort((a, b) => {
+                    if (sortMode === 'closest') {
+                        const distA = a.location ? getDistance(userLocation?.lat, userLocation?.lng, a.location.lat, a.location.lng) : Infinity;
+                        const distB = b.location ? getDistance(userLocation?.lat, userLocation?.lng, b.location.lat, b.location.lng) : Infinity;
+                        if (distA === Infinity && distB === Infinity) return getTime(b) - getTime(a);
+                        return distA - distB;
+                    }
+                    return getTime(b) - getTime(a);
+                }).map((report, index) => {
                     const item = report;
                     const title = item.title || 'Notice';
                     const description = item.description;
                     const category = item.category || 'Incident';
                     const severity = item.severity || 'medium';
-                    const statusClass = `status-${item.status}`;
+                    const statusClass = item.isSolved
+                        ? `status-${item.status}`  // blue for solved
+                        : severity === 'low'
+                            ? 'status-green'         // green dot for low severity
+                            : `status-${item.status}`;
                     const generalLoc = item.areaName;
                     const specificLoc = item.locationName;
 
@@ -159,6 +204,13 @@ export default function ReportsPanel({
                             {/* Info Bottom: Description & Actions */}
                             <div className="report-info" style={{ paddingTop: item.image ? 12 : (item.communityName ? 0 : 4) }}>
                                 {description && <p className="report-desc">{description}</p>}
+
+                                {/* Timestamp */}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 8, marginBottom: 4, fontSize: 11, color: 'var(--text-secondary)', opacity: 0.8 }}>
+                                    <Clock size={11} />
+                                    <span>{timeAgo(getTime(item)) || 'Unknown time'}</span>
+                                    {item.isSolved && <span style={{ marginLeft: 8, color: '#38BDF8', fontWeight: 600 }}>✓ Solved</span>}
+                                </div>
 
                                 <div className="report-actions-footer">
                                     {!item.isSolved && (
@@ -211,7 +263,13 @@ export default function ReportsPanel({
 
                     const category = item.category || (isIncident ? 'Incident' : 'Notice');
                     const severity = item.severity || 'medium';
-                    const statusClass = isClassicReport ? `status-${item.status}` : (isIncident ? 'status-red' : 'status-orange');
+                    const statusClass = isClassicReport
+                        ? (item.isSolved
+                            ? `status-${item.status}`   // blue for solved
+                            : severity === 'low'
+                                ? 'status-green'          // green dot for low severity
+                                : `status-${item.status}`)
+                        : (isIncident ? 'status-red' : 'status-orange');
 
                     const generalLoc = isClassicReport ? item.areaName : item.author;
                     let specificLoc = isClassicReport ? item.locationName : '';
@@ -279,19 +337,22 @@ export default function ReportsPanel({
                             <div className="report-info" style={{ paddingTop: item.image ? 12 : (item.communityName ? 0 : 4) }}>
                                 {description && <p className="report-desc">{description}</p>}
 
-                                {/* Extra metadata for community posts */}
-                                {!isClassicReport && (
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 10, fontSize: 11, color: 'var(--text-secondary)' }}>
-                                        <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                                            <Clock size={11} /> {timeAgo(item.timestamp)}
+                                {/* Time & metadata — shown for all item types */}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 10, fontSize: 11, color: 'var(--text-secondary)' }}>
+                                    <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                        <Clock size={11} /> {timeAgo(getTime(item)) || 'Unknown time'}
+                                    </span>
+                                    {item.isSolved && (
+                                        <span style={{ color: '#38BDF8', fontWeight: 600, display: 'flex', alignItems: 'center' }}>
+                                            ✓ Solved
                                         </span>
-                                        {!item.location && (
-                                            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                                                <Globe size={11} /> General Notice
-                                            </span>
-                                        )}
-                                    </div>
-                                )}
+                                    )}
+                                    {!isClassicReport && !item.location && (
+                                        <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                            <Globe size={11} /> General Notice
+                                        </span>
+                                    )}
+                                </div>
                             </div>
                         </div>
                     );

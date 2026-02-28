@@ -118,9 +118,6 @@ VITE_FIREBASE_MEASUREMENT_ID=
 
 VITE_GOOGLE_MAPS_API_KEY=
 VITE_GEMINI_API_KEY=
-VITE_OPENWEATHER_API_KEY=
-
-VITE_FUNCTIONS_BASE_URL=
 ```
 
 ---
@@ -146,6 +143,18 @@ Obtain from: **Firebase**
    * `measurementId`
 
 Copy those values into your `.env`.
+
+### Steps for firebase aunthentication:
+
+1. Go to Authentication
+2. Add new authentication method
+3. Select Email and passwordless email
+
+### Steps for firebase Datastore:
+
+1. Go to Firebase Datastore
+2. Create Database
+3. Add new collection based on the data below the README.md (Should technically not be required, unless console prompts for creation then create one using the console link)
 
 ---
 
@@ -195,48 +204,7 @@ VITE_GEMINI_API_KEY=
 
 ---
 
-## 🌦️ OpenWeatherMap API Key
-
-Obtain from: **OpenWeather**
-
-### Steps:
-
-1. Go to [https://openweathermap.org/api](https://openweathermap.org/api)
-2. Create a free account.
-3. Navigate to **My API Keys**
-4. Generate a key.
-
-Paste into:
-
-```
-VITE_OPENWEATHER_API_KEY=
-```
-
----
-
-## ☁️ Firebase Cloud Functions Base URL
-
-After deploying functions using:
-
-```bash
-firebase deploy --only functions
-```
-
-You will get a URL like:
-
-```
-https://us-central1-your_project_id.cloudfunctions.net
-```
-
-Set:
-
-```
-VITE_FUNCTIONS_BASE_URL=https://us-central1-your_project_id.cloudfunctions.net
-```
-
----
-
-# ⚠️ Security Notes
+# ⚠️ Security Notes for other users
 
 * Never commit `.env` files.
 * Add `.env` to `.gitignore`.
@@ -272,35 +240,9 @@ Distributed under the *MIT License*. See the **LICENSE** file for more details.
 
 Have ideas or suggestions? Open an issue or start a discussion!
 
-## Firebase Setup
+---
 
-### Steps for firebase keys:
-
-1. Go to [https://console.firebase.google.com](https://console.firebase.google.com)
-2. Create or select a project.
-3. Click **Project Settings** (⚙️ icon).
-4. Under **Your Apps**, register a Web App.
-5. Firebase will generate a config object containing:
-
-   * `apiKey`
-   * `authDomain`
-   * `projectId`
-   * `storageBucket`
-   * `messagingSenderId`
-   * `appId`
-   * `measurementId`
-
-Copy those values into your `.env`.
-
-### Steps for firebase aunthentication:
-
-1. Go to Firebase Console https://console.firebase.google.com
-2. Click Add Project
-3. Enter project name
-4. Disable Google Analytics (optional)
-5. Click Create Project
-
-### database explain:
+### database breakdown:
 
 1. users
     * avatar
